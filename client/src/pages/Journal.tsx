@@ -1,15 +1,19 @@
 // ============================================================
-// JOURNAL SCREEN — Clean, distraction-free writing
-// Reach & Influence Protocol surfaces before writing.
+// JOURNAL SCREEN — Oracle Edition
+// Peach accent. Distraction-free writing canvas.
 // ============================================================
 
 import { useState, useEffect } from 'react';
+import { VoiceMic } from '@/components/VoiceMic';
 import { motion, AnimatePresence } from 'framer-motion';
-import { reachInfluenceAffirmations, formatStamp } from '@/lib/content';
+import { reachInfluenceAffirmations } from '@/lib/content';
 import {
   AffirmationCard,
   PageHeader,
   Hairline,
+  SectionLabel,
+  TogglePills,
+  EASE,
 } from '@/components/ui-shared';
 import {
   getJournalEntries,
@@ -38,6 +42,7 @@ export default function Journal() {
     setEntries(prev => [entry, ...prev]);
     setDraft('');
     setSaved(true);
+    if ('vibrate' in navigator) navigator.vibrate?.(10);
     setTimeout(() => setSaved(false), 2500);
   };
 
@@ -49,37 +54,27 @@ export default function Journal() {
 
   return (
     <motion.div
-      initial={{ opacity: 0, y: 6 }}
-      animate={{ opacity: 1, y: 0 }}
-      transition={{ duration: 0.3, ease: [0.22, 1, 0.36, 1] }}
-      className="min-h-screen"
+      initial={{ opacity: 0 }} animate={{ opacity: 1 }}
+      transition={{ duration: 0.35, ease: EASE }}
+      className="min-h-screen safe-top"
     >
-      <div className="container pt-14 pb-32">
-        <div className="flex items-start justify-between mb-6">
-          <PageHeader title="Journal." stamp="JOURNAL · REFLECTION" />
-          {/* View toggle */}
-          <div
-            className="flex mt-1 rounded-full p-0.5"
-            style={{ background: 'rgba(255,255,255,0.06)', border: '1px solid rgba(255,255,255,0.07)' }}
-          >
-            {(['write', 'entries'] as JournalView[]).map(v => (
-              <button
-                key={v}
-                onClick={() => setView(v)}
-                className="px-3 py-1 rounded-full text-xs transition-all duration-200"
-                style={{
-                  fontFamily: 'var(--font-ui)',
-                  fontSize: '0.7rem',
-                  letterSpacing: '0.02em',
-                  background: view === v ? '#E8E0D0' : 'transparent',
-                  color: view === v ? '#0A0A0B' : 'rgba(255,255,255,0.4)',
-                }}
-              >
-                {v === 'write' ? 'Write' : `Entries (${entries.length})`}
-              </button>
-            ))}
-          </div>
-        </div>
+      <div className="container pt-8 pb-32">
+        <PageHeader
+          stamp="JOURNAL · REFLECTION"
+          title="Reflect."
+          subtitle="Capture thoughts. Clarify ideas. Ship better."
+          accent="var(--peach)"
+          right={
+            <TogglePills
+              value={view}
+              onChange={setView}
+              options={[
+                { value: 'write', label: 'Write' },
+                { value: 'entries', label: `Log · ${entries.length}` },
+              ]}
+            />
+          }
+        />
 
         <AnimatePresence mode="wait">
           {view === 'write' ? (
@@ -88,55 +83,62 @@ export default function Journal() {
               initial={{ opacity: 0, x: -8 }}
               animate={{ opacity: 1, x: 0 }}
               exit={{ opacity: 0, x: 8 }}
-              transition={{ duration: 0.25, ease: [0.22, 1, 0.36, 1] }}
+              transition={{ duration: 0.3, ease: EASE }}
             >
-              {/* Reach & Influence Protocol */}
-              <div className="mb-3">
-                <span className="font-mono-stamp text-white/30">Reach & Influence Protocol</span>
+              <SectionLabel accent="var(--peach)">REACH & INFLUENCE</SectionLabel>
+              <div className="mb-8">
+                <AffirmationCard affirmations={reachInfluenceAffirmations} accent="var(--peach)" variant="peach" />
               </div>
-              <AffirmationCard affirmations={reachInfluenceAffirmations} />
 
-              <Hairline className="my-7" />
+              <Hairline className="mb-8" />
 
-              {/* Writing area */}
-              <div className="mb-3 flex items-center justify-between">
-                <span className="font-mono-stamp text-white/30">Today's Reflection</span>
-                <span className="font-mono-stamp text-white/20">{wordCount} words</span>
-              </div>
+              <SectionLabel
+                accent="var(--citrine)"
+                right={
+                  <span className="font-mono-stamp text-white/40">
+                    {wordCount} {wordCount === 1 ? 'WORD' : 'WORDS'}
+                  </span>
+                }
+              >
+                TODAY'S REFLECTION
+              </SectionLabel>
 
               <div
-                className="rounded-2xl p-5 relative"
+                className="rounded-[1.5rem] p-6 relative mb-5 overflow-hidden"
                 style={{
-                  background: 'rgba(17,17,19,0.7)',
-                  border: '1px solid rgba(255,255,255,0.07)',
-                  backgroundImage: 'url(https://d2xsxph8kpxj0f.cloudfront.net/91190584/JbwyyshxtMaKpm7nvUYhjz/hero-journal-PSCsty5gkNgXCzgaLS2pso.webp)',
-                  backgroundSize: 'cover',
-                  backgroundPosition: 'center',
+                  background: 'linear-gradient(180deg, rgba(255,184,154,0.05) 0%, rgba(20,20,30,0.9) 100%)',
+                  border: '1px solid rgba(255,184,154,0.15)',
+                  minHeight: 320,
+                  boxShadow: '0 1px 0 rgba(255,255,255,0.05) inset, 0 20px 60px -20px rgba(255,184,154,0.08)',
                 }}
               >
+                {/* Subtle paper texture via noise */}
                 <div
-                  className="absolute inset-0 rounded-2xl"
-                  style={{ background: 'rgba(10,10,11,0.88)', backdropFilter: 'blur(2px)' }}
+                  className="absolute inset-0 pointer-events-none opacity-[0.03] mix-blend-overlay"
+                  style={{
+                    backgroundImage: `url("data:image/svg+xml,%3Csvg viewBox='0 0 200 200' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.9'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)'/%3E%3C/svg%3E")`,
+                  }}
                 />
                 <textarea
                   value={draft}
                   onChange={e => setDraft(e.target.value)}
-                  placeholder="What's on your mind today? Write freely..."
-                  rows={10}
-                  className="relative z-10 w-full bg-transparent text-[#F5F4F1] outline-none resize-none placeholder:text-white/20 leading-relaxed"
+                  placeholder="What's on your mind today? Write freely…"
+                  rows={12}
+                  className="relative z-10 w-full bg-transparent outline-none resize-none placeholder:text-white/20"
                   style={{
                     fontFamily: 'var(--font-display)',
                     fontWeight: 300,
-                    fontSize: '1.05rem',
+                    fontSize: '1.1rem',
                     lineHeight: 1.7,
                     letterSpacing: '0.005em',
+                    color: 'rgba(245,244,248,0.95)',
                   }}
                 />
               </div>
 
-              <div className="flex items-center justify-between mt-4">
-                <span className="text-white/25 text-xs" style={{ fontFamily: 'var(--font-ui)' }}>
-                  {new Date().toLocaleDateString('en-US', { weekday: 'long', month: 'long', day: 'numeric' })}
+              <div className="flex items-center justify-between">
+                <span className="font-mono-stamp text-white/35">
+                  {new Date().toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric' }).toUpperCase()}
                 </span>
                 <div className="flex items-center gap-3">
                   {saved && (
@@ -144,16 +146,28 @@ export default function Journal() {
                       initial={{ opacity: 0, x: 4 }}
                       animate={{ opacity: 1, x: 0 }}
                       exit={{ opacity: 0 }}
-                      className="text-sage text-xs"
-                      style={{ fontFamily: 'var(--font-mono)', fontSize: '0.6rem', letterSpacing: '0.1em' }}
+                      className="flex items-center gap-1.5 font-mono-stamp"
+                      style={{ color: 'var(--mint)' }}
                     >
-                      SAVED ✓
+                      <span className="pulse-dot" style={{ background: 'var(--mint)' }} />
+                      SAVED
                     </motion.span>
                   )}
+                  <VoiceMic
+                    onFinalText={(t) => setDraft(prev => (prev + (prev.endsWith(' ') || !prev ? '' : ' ') + t).trimStart())}
+                    color="#FFB49A"
+                    size={38}
+                  />
                   <button
                     onClick={handleSave}
                     disabled={!draft.trim()}
-                    className="btn-bone disabled:opacity-30 disabled:cursor-not-allowed"
+                    className="btn-primary disabled:opacity-30 disabled:cursor-not-allowed"
+                    style={{
+                      background: draft.trim()
+                        ? 'linear-gradient(180deg, #FFCBAE 0%, #FFA17A 100%)'
+                        : undefined,
+                      boxShadow: draft.trim() ? '0 4px 16px rgba(255,184,154,0.25)' : 'none',
+                    }}
                   >
                     Save Entry
                   </button>
@@ -166,58 +180,78 @@ export default function Journal() {
               initial={{ opacity: 0, x: 8 }}
               animate={{ opacity: 1, x: 0 }}
               exit={{ opacity: 0, x: -8 }}
-              transition={{ duration: 0.25, ease: [0.22, 1, 0.36, 1] }}
+              transition={{ duration: 0.3, ease: EASE }}
             >
               {entries.length === 0 ? (
-                <div className="text-center py-16">
+                <div className="text-center py-20">
+                  <div
+                    className="w-12 h-12 rounded-full flex items-center justify-center mx-auto mb-4"
+                    style={{
+                      background: 'rgba(255,184,154,0.08)',
+                      border: '1px solid rgba(255,184,154,0.2)',
+                    }}
+                  >
+                    <svg width="18" height="18" viewBox="0 0 18 18" fill="none">
+                      <path d="M4 3H13V15H4V3Z" stroke="var(--peach)" strokeWidth="1.5" strokeLinejoin="round"/>
+                      <path d="M7 7H11M7 10H11" stroke="var(--peach)" strokeWidth="1.2" strokeLinecap="round"/>
+                    </svg>
+                  </div>
                   <p
-                    className="text-white/25 text-lg mb-2"
-                    style={{ fontFamily: 'var(--font-display)', fontWeight: 400 }}
+                    className="text-white/50 mb-1.5"
+                    style={{ fontFamily: 'var(--font-display)', fontWeight: 400, fontSize: '1.2rem' }}
                   >
                     No entries yet.
                   </p>
-                  <p className="text-white/20 text-sm" style={{ fontFamily: 'var(--font-ui)' }}>
+                  <p className="text-white/30 text-sm" style={{ fontFamily: 'var(--font-ui)' }}>
                     Write your first reflection.
                   </p>
                 </div>
               ) : (
-                <div className="space-y-3">
+                <div className="space-y-2.5">
                   {entries.map((entry, i) => (
                     <motion.div
                       key={entry.id}
                       initial={{ opacity: 0, y: 6 }}
                       animate={{ opacity: 1, y: 0 }}
-                      transition={{ delay: i * 0.05, duration: 0.25, ease: [0.22, 1, 0.36, 1] }}
+                      transition={{ delay: i * 0.04, duration: 0.3, ease: EASE }}
                     >
                       {selectedEntry?.id === entry.id ? (
                         <div
-                          className="rounded-2xl p-5"
-                          style={{ background: 'rgba(17,17,19,0.9)', border: '1px solid rgba(255,255,255,0.1)' }}
+                          className="card-elevated p-5"
+                          style={{
+                            borderColor: 'rgba(255,184,154,0.22)',
+                            boxShadow: '0 20px 60px -20px rgba(255,184,154,0.1)',
+                          }}
                         >
                           <div className="flex items-center justify-between mb-4">
-                            <span className="font-mono-stamp text-white/35">
-                              {new Date(entry.createdAt).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })}
+                            <span className="font-mono-stamp" style={{ color: 'var(--peach)' }}>
+                              {new Date(entry.createdAt).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' }).toUpperCase()}
                             </span>
-                            <div className="flex gap-2">
+                            <div className="flex gap-3">
                               <button
                                 onClick={() => handleDelete(entry.id)}
-                                className="text-terra/60 text-xs hover:text-terra transition-colors"
-                                style={{ fontFamily: 'var(--font-mono)', fontSize: '0.6rem', letterSpacing: '0.08em' }}
+                                className="font-mono-stamp hover:opacity-80 transition-opacity"
+                                style={{ color: 'var(--coral)' }}
                               >
                                 DELETE
                               </button>
                               <button
                                 onClick={() => setSelectedEntry(null)}
-                                className="text-white/30 text-xs hover:text-white/60 transition-colors"
-                                style={{ fontFamily: 'var(--font-mono)', fontSize: '0.6rem', letterSpacing: '0.08em' }}
+                                className="font-mono-stamp text-white/35 hover:text-white/60 transition-colors"
                               >
                                 CLOSE
                               </button>
                             </div>
                           </div>
                           <p
-                            className="text-[#F5F4F1] leading-relaxed whitespace-pre-wrap"
-                            style={{ fontFamily: 'var(--font-display)', fontWeight: 300, fontSize: '1rem', lineHeight: 1.7 }}
+                            className="leading-relaxed whitespace-pre-wrap"
+                            style={{
+                              fontFamily: 'var(--font-display)',
+                              fontWeight: 300,
+                              fontSize: '1.05rem',
+                              lineHeight: 1.7,
+                              color: 'rgba(245,244,248,0.95)',
+                            }}
                           >
                             {entry.content}
                           </p>
@@ -225,19 +259,21 @@ export default function Journal() {
                       ) : (
                         <button
                           onClick={() => setSelectedEntry(entry)}
-                          className="w-full text-left rounded-2xl p-4 transition-all duration-200 group"
-                          style={{ background: 'rgba(255,255,255,0.03)', border: '1px solid rgba(255,255,255,0.07)' }}
+                          className="w-full text-left card-solid p-4 transition-all duration-300 hover:scale-[1.005] group"
+                          style={{
+                            borderColor: 'rgba(255,255,255,0.07)',
+                          }}
                         >
                           <div className="flex items-center justify-between mb-2">
-                            <span className="font-mono-stamp text-white/30">
-                              {new Date(entry.createdAt).toLocaleDateString('en-US', { month: 'short', day: 'numeric' })}
+                            <span className="font-mono-stamp text-white/40">
+                              {new Date(entry.createdAt).toLocaleDateString('en-US', { month: 'short', day: 'numeric' }).toUpperCase()}
                             </span>
-                            <span className="font-mono-stamp text-white/20">
-                              {entry.content.trim().split(/\s+/).length} words
+                            <span className="font-mono-stamp text-white/30">
+                              {entry.content.trim().split(/\s+/).length} WORDS
                             </span>
                           </div>
                           <p
-                            className="text-white/60 text-sm leading-relaxed line-clamp-2"
+                            className="text-white/70 text-sm leading-relaxed line-clamp-2"
                             style={{ fontFamily: 'var(--font-display)', fontWeight: 300 }}
                           >
                             {entry.content}

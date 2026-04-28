@@ -1,7 +1,7 @@
 // ============================================================
 // MINDSHIFT AI — AI CHAT LAYER
-// Uses VITE_FRONTEND_FORGE_API_KEY + VITE_FRONTEND_FORGE_API_URL
-// Falls back to BUILT_IN_FORGE_API_KEY pattern if needed
+// Uses VITE_BUILT_IN_FORGE_API_KEY + VITE_BUILT_IN_FORGE_API_URL
+// These are the working Manus Forge credentials.
 // ============================================================
 
 export interface ChatMessage {
@@ -9,8 +9,8 @@ export interface ChatMessage {
   content: string;
 }
 
-const API_URL  = import.meta.env.VITE_FRONTEND_FORGE_API_URL  ?? 'https://forge.manus.ai';
-const API_KEY  = import.meta.env.VITE_FRONTEND_FORGE_API_KEY  ?? '';
+const API_URL  = import.meta.env.VITE_BUILT_IN_FORGE_API_URL  ?? 'https://forge.manus.ai';
+const API_KEY  = import.meta.env.VITE_BUILT_IN_FORGE_API_KEY  ?? '';
 const MODEL    = 'gpt-4.1-mini';
 
 export async function streamChat(

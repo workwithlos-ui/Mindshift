@@ -1,7 +1,6 @@
 // ============================================================
-// PROGRESS SCREEN — Daily tracking + Weekly review
-// Revenue moved, actions, content, outreach
-// Expansion Mode unlocks after consistent tracking
+// PROGRESS SCREEN — Oracle Edition
+// Heatmap + streak badge + weekly review. Mixed pastel palette.
 // ============================================================
 
 import { useState, useEffect } from 'react';
@@ -18,11 +17,17 @@ import {
 import {
   PageHeader,
   Hairline,
-  SectionCard,
+  SectionLabel,
+  Card,
   ProgressRing,
+  TogglePills,
+  EASE,
 } from '@/components/ui-shared';
+import { WeeklyReportView } from '@/components/WeeklyReportView';
+import { computeStreak, maybeNudge } from '@/lib/streaks';
+import { expansionAffirmations, expansionDirectives } from '@/lib/content';
 
-type ProgressView = 'daily' | 'weekly';
+type ProgressView = 'daily' | 'weekly' | 'report';
 
 function getWeekStart(): string {
   const d = new Date();
@@ -54,23 +59,20 @@ export default function Progress() {
   const [view, setView] = useState<ProgressView>('daily');
   const [progress, setProgress] = useState(getTodayProgress());
   const [history, setHistory] = useState<DailyProgress[]>([]);
-  const [weeklyReviews, setWeeklyReviews] = useState<WeeklyReview[]>([]);
   const [weekReview, setWeekReview] = useState<WeeklyReview>({
     weekStart: getWeekStart(),
-    produced: '',
-    wasted: '',
-    remove: '',
-    repeat: '',
-    scale: '',
+    produced: '', wasted: '', remove: '', repeat: '', scale: '',
   });
   const [reviewSaved, setReviewSaved] = useState(false);
 
   useEffect(() => {
     const h = getProgressHistory();
     setHistory(h);
-    setWeeklyReviews(getWeeklyReviews());
     const existing = getWeeklyReviews().find(r => r.weekStart === getWeekStart());
     if (existing) setWeekReview(existing);
+    // Fire streak nudge on mount (at most once per day)
+    const state = computeStreak();
+    maybeNudge(state);
   }, []);
 
   const streak = getStreakDays(history);
@@ -84,186 +86,276 @@ export default function Progress() {
 
   const saveReview = () => {
     saveWeeklyReview(weekReview);
-    setWeeklyReviews(getWeeklyReviews());
     setReviewSaved(true);
+    if ('vibrate' in navigator) navigator.vibrate?.(12);
     setTimeout(() => setReviewSaved(false), 2500);
   };
 
-  // Calculate weekly stats
-  const weekDays = Array.from({ length: 7 }, (_, i) => {
+  // Build 14-day heatmap data (for richer visual)
+  const heatDays = Array.from({ length: 14 }, (_, i) => {
     const d = new Date();
-    d.setDate(d.getDate() - (6 - i));
-    return d.toISOString().split('T')[0];
+    d.setDate(d.getDate() - (13 - i));
+    const date = d.toISOString().split('T')[0];
+    const p = history.find(h => h.date === date);
+    const score = p
+      ? (p.revenueMoved ? 1 : 0) + Math.min(p.meaningfulActions / 3, 1) + Math.min(p.contentProduced, 1)
+      : 0;
+    return { date, score, day: d.getDay() };
   });
 
-  const weekData = weekDays.map(date => history.find(p => p.date === date) ?? {
-    date, revenueMoved: false, meaningfulActions: 0, contentProduced: 0, outreachActions: 0, priority: '',
-  });
-
-  const weekRevenue = weekData.filter(d => d.revenueMoved).length;
-  const weekActions = weekData.reduce((a, d) => a + d.meaningfulActions, 0);
-  const weekContent = weekData.reduce((a, d) => a + d.contentProduced, 0);
+  // Weekly stats (last 7 days)
+  const last7 = heatDays.slice(7);
+  const weekRevenue = last7.filter(d => {
+    const p = history.find(h => h.date === d.date);
+    return p?.revenueMoved;
+  }).length;
+  const weekActions = last7.reduce((a, d) => {
+    const p = history.find(h => h.date === d.date);
+    return a + (p?.meaningfulActions ?? 0);
+  }, 0);
+  const weekContent = last7.reduce((a, d) => {
+    const p = history.find(h => h.date === d.date);
+    return a + (p?.contentProduced ?? 0);
+  }, 0);
 
   return (
     <motion.div
-      initial={{ opacity: 0, y: 6 }}
-      animate={{ opacity: 1, y: 0 }}
-      transition={{ duration: 0.3, ease: [0.22, 1, 0.36, 1] }}
-      className="min-h-screen"
+      initial={{ opacity: 0 }} animate={{ opacity: 1 }}
+      transition={{ duration: 0.35, ease: EASE }}
+      className="min-h-screen safe-top"
     >
-      <div className="container pt-14 pb-32">
-        <div className="flex items-start justify-between mb-6">
-          <PageHeader title="Progress." stamp="PROGRESS · TRACKING" />
-          <div
-            className="flex mt-1 rounded-full p-0.5"
-            style={{ background: 'rgba(255,255,255,0.06)', border: '1px solid rgba(255,255,255,0.07)' }}
-          >
-            {(['daily', 'weekly'] as ProgressView[]).map(v => (
-              <button
-                key={v}
-                onClick={() => setView(v)}
-                className="px-3 py-1 rounded-full text-xs transition-all duration-200"
-                style={{
-                  fontFamily: 'var(--font-ui)',
-                  fontSize: '0.7rem',
-                  background: view === v ? '#E8E0D0' : 'transparent',
-                  color: view === v ? '#0A0A0B' : 'rgba(255,255,255,0.4)',
-                }}
-              >
-                {v === 'daily' ? 'Daily' : 'Weekly'}
-              </button>
-            ))}
-          </div>
-        </div>
+      <div className="container pt-8 pb-32">
+        <PageHeader
+          stamp="PROGRESS · TRACKING"
+          title="Progress."
+          subtitle="What you track compounds. What you don't, disappears."
+          accent="var(--mint)"
+          right={
+            <TogglePills
+              value={view}
+              onChange={setView}
+              options={[
+                { value: 'daily', label: 'Daily' },
+                { value: 'weekly', label: 'Weekly' },
+                { value: 'report', label: 'Report' },
+              ]}
+            />
+          }
+        />
 
-        {/* Streak + Expansion Mode */}
-        <div
-          className="flex items-center justify-between p-4 rounded-2xl mb-6"
-          style={{
-            background: expansionMode
-              ? 'linear-gradient(135deg, rgba(123,197,152,0.1) 0%, rgba(123,197,152,0.05) 100%)'
-              : 'rgba(255,255,255,0.03)',
-            border: expansionMode ? '1px solid rgba(123,197,152,0.2)' : '1px solid rgba(255,255,255,0.07)',
-          }}
+        {/* Streak hero card */}
+        <Card
+          variant={expansionMode ? 'mint' : 'elevated'}
+          className="!p-5 mb-6 relative overflow-hidden"
         >
-          <div>
-            <p
-              className="text-[#F5F4F1] text-lg leading-none"
-              style={{ fontFamily: 'var(--font-display)', fontWeight: 500 }}
-            >
-              {streak} day{streak !== 1 ? 's' : ''}
-            </p>
-            <p className="text-white/35 text-xs mt-1" style={{ fontFamily: 'var(--font-ui)' }}>
-              {expansionMode ? 'Expansion Mode active' : `${7 - streak} days to Expansion Mode`}
-            </p>
-          </div>
-          <div className="flex items-center gap-2">
-            {expansionMode && <div className="sage-dot" />}
-            <span
-              className="text-xs"
+          <div className="flex items-center justify-between relative">
+            <div className="min-w-0">
+              <div className="flex items-baseline gap-2 mb-1">
+                <span
+                  style={{
+                    fontFamily: 'var(--font-display)',
+                    fontWeight: 300,
+                    fontSize: '3rem',
+                    letterSpacing: '-0.04em',
+                    color: expansionMode ? 'var(--mint)' : '#F5F4F8',
+                    lineHeight: 1,
+                    textShadow: expansionMode ? '0 0 24px rgba(168,232,154,0.35)' : 'none',
+                  }}
+                >
+                  {streak}
+                </span>
+                <span
+                  className="text-white/50 text-sm"
+                  style={{ fontFamily: 'var(--font-ui)', fontWeight: 500 }}
+                >
+                  day{streak !== 1 ? 's' : ''}
+                </span>
+              </div>
+              <p className="text-white/50 text-xs" style={{ fontFamily: 'var(--font-ui)' }}>
+                {expansionMode
+                  ? 'Expansion Mode active — scale what works'
+                  : `${7 - streak} day${7 - streak !== 1 ? 's' : ''} to Expansion Mode`}
+              </p>
+            </div>
+            <div
+              className="flex items-center gap-2 px-3 py-1.5 rounded-full"
               style={{
-                fontFamily: 'var(--font-mono)',
-                fontSize: '0.6rem',
-                letterSpacing: '0.1em',
-                color: expansionMode ? '#7BC598' : 'rgba(255,255,255,0.25)',
+                background: expansionMode
+                  ? 'rgba(168,232,154,0.15)'
+                  : 'rgba(255,255,255,0.04)',
+                border: expansionMode
+                  ? '1px solid rgba(168,232,154,0.3)'
+                  : '1px solid rgba(255,255,255,0.08)',
               }}
             >
-              {expansionMode ? 'EXPANSION' : 'STREAK'}
-            </span>
+              <span
+                className="pulse-dot"
+                style={{
+                  background: expansionMode ? 'var(--mint)' : 'rgba(255,255,255,0.4)',
+                }}
+              />
+              <span
+                className="font-mono-stamp"
+                style={{
+                  color: expansionMode ? 'var(--mint)' : 'rgba(255,255,255,0.55)',
+                  fontWeight: 600,
+                }}
+              >
+                {expansionMode ? 'EXPANSION' : 'STREAK'}
+              </span>
+            </div>
           </div>
-        </div>
+        </Card>
 
         <AnimatePresence mode="wait">
-          {view === 'daily' ? (
+          {view === 'report' ? (
+            <motion.div
+              key="report"
+              initial={{ opacity: 0, y: 4 }}
+              animate={{ opacity: 1, y: 0 }}
+              exit={{ opacity: 0, y: -4 }}
+              transition={{ duration: 0.3, ease: EASE }}
+            >
+              <WeeklyReportView />
+            </motion.div>
+          ) : view === 'daily' ? (
             <motion.div
               key="daily"
               initial={{ opacity: 0, x: -8 }}
               animate={{ opacity: 1, x: 0 }}
               exit={{ opacity: 0, x: 8 }}
-              transition={{ duration: 0.25, ease: [0.22, 1, 0.36, 1] }}
+              transition={{ duration: 0.3, ease: EASE }}
             >
-              {/* Revenue moved */}
+              {/* Revenue moved toggle */}
               <button
                 onClick={() => updateProgress({ revenueMoved: !progress.revenueMoved })}
-                className="w-full flex items-center justify-between p-4 rounded-2xl mb-3 transition-all duration-200"
+                className="w-full flex items-center justify-between p-4 rounded-2xl mb-3 transition-all duration-300 hover:scale-[1.005]"
                 style={{
-                  background: progress.revenueMoved ? 'rgba(123,197,152,0.1)' : 'rgba(255,255,255,0.04)',
-                  border: `1px solid ${progress.revenueMoved ? 'rgba(123,197,152,0.2)' : 'rgba(255,255,255,0.07)'}`,
+                  background: progress.revenueMoved
+                    ? 'linear-gradient(135deg, rgba(168,232,154,0.14) 0%, rgba(111,200,94,0.05) 100%)'
+                    : 'rgba(255,255,255,0.03)',
+                  border: `1px solid ${progress.revenueMoved ? 'rgba(168,232,154,0.28)' : 'rgba(255,255,255,0.07)'}`,
+                  boxShadow: progress.revenueMoved ? '0 8px 32px -12px rgba(168,232,154,0.2)' : 'none',
                 }}
               >
                 <div className="flex items-center gap-3">
                   <div
-                    className="w-5 h-5 rounded-full flex items-center justify-center"
+                    className="w-6 h-6 rounded-full flex items-center justify-center transition-all duration-300"
                     style={{
-                      background: progress.revenueMoved ? '#7BC598' : 'rgba(255,255,255,0.08)',
-                      border: progress.revenueMoved ? 'none' : '1px solid rgba(255,255,255,0.15)',
+                      background: progress.revenueMoved ? 'var(--mint)' : 'rgba(255,255,255,0.06)',
+                      border: progress.revenueMoved ? 'none' : '1px solid rgba(255,255,255,0.12)',
+                      boxShadow: progress.revenueMoved ? '0 0 16px rgba(168,232,154,0.4)' : 'none',
                     }}
                   >
                     {progress.revenueMoved && (
-                      <svg width="10" height="8" viewBox="0 0 10 8" fill="none">
-                        <path d="M1 4L3.5 6.5L9 1" stroke="#0A0A0B" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"/>
+                      <svg width="11" height="9" viewBox="0 0 11 9" fill="none">
+                        <path d="M1 4.5L4 7L10 1" stroke="#0A0A0F" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"/>
                       </svg>
                     )}
                   </div>
-                  <span className="text-sm" style={{ fontFamily: 'var(--font-ui)', color: progress.revenueMoved ? '#7BC598' : 'rgba(255,255,255,0.6)' }}>
+                  <span
+                    className="text-sm"
+                    style={{
+                      fontFamily: 'var(--font-ui)',
+                      fontWeight: 500,
+                      color: progress.revenueMoved ? 'var(--mint)' : 'rgba(245,244,248,0.65)',
+                    }}
+                  >
                     Revenue moved forward
                   </span>
                 </div>
               </button>
 
               {/* Counters */}
-              <SectionCard className="mb-3">
+              <Card variant="elevated" className="mb-3">
                 <CounterRow
-                  label="Meaningful Actions"
+                  label="Meaningful actions"
                   value={progress.meaningfulActions}
                   onChange={v => updateProgress({ meaningfulActions: v })}
-                  accent={progress.meaningfulActions >= 3}
-                  accentColor="#E8E0D0"
+                  accentColor="var(--amethyst)"
+                  target={3}
                 />
-                <Hairline className="my-3" />
+                <Hairline className="my-3.5" />
                 <CounterRow
-                  label="Content Produced"
+                  label="Content produced"
                   value={progress.contentProduced}
                   onChange={v => updateProgress({ contentProduced: v })}
-                  accent={progress.contentProduced >= 1}
-                  accentColor="#7BC598"
+                  accentColor="var(--peach)"
+                  target={1}
                 />
-                <Hairline className="my-3" />
+                <Hairline className="my-3.5" />
                 <CounterRow
-                  label="Outreach Actions"
+                  label="Outreach actions"
                   value={progress.outreachActions}
                   onChange={v => updateProgress({ outreachActions: v })}
-                  accent={progress.outreachActions >= 3}
-                  accentColor="#E8E0D0"
+                  accentColor="var(--teal)"
+                  target={3}
                 />
-              </SectionCard>
+              </Card>
 
-              {/* Week heatmap */}
-              <Hairline className="my-6" />
-              <div className="mb-3">
-                <span className="font-mono-stamp text-white/30">7-Day Activity</span>
-              </div>
-              <div className="flex gap-1.5">
-                {weekData.map((d, i) => {
-                  const score = (d.revenueMoved ? 1 : 0) + Math.min(d.meaningfulActions / 3, 1) + Math.min(d.contentProduced, 1);
-                  const intensity = score / 3;
-                  const dayName = ['M','T','W','T','F','S','S'][new Date(d.date + 'T12:00:00').getDay() === 0 ? 6 : new Date(d.date + 'T12:00:00').getDay() - 1];
-                  return (
-                    <div key={i} className="flex-1 flex flex-col items-center gap-1.5">
+              {/* 14-day heatmap */}
+              <Hairline className="my-8" />
+              <SectionLabel accent="var(--mint)">14-DAY ACTIVITY</SectionLabel>
+              <Card variant="elevated">
+                <div className="grid grid-cols-14 gap-1" style={{ gridTemplateColumns: 'repeat(14, minmax(0, 1fr))' }}>
+                  {heatDays.map((d, i) => {
+                    const intensity = d.score / 3;
+                    const isToday = i === 13;
+                    return (
+                      <div key={i} className="flex flex-col items-center gap-1.5">
+                        <motion.div
+                          initial={{ opacity: 0, scale: 0.7 }}
+                          animate={{ opacity: 1, scale: 1 }}
+                          transition={{ delay: i * 0.02, duration: 0.3, ease: EASE }}
+                          className="w-full rounded-md transition-all"
+                          style={{
+                            aspectRatio: '1 / 1.5',
+                            background: intensity > 0
+                              ? `linear-gradient(180deg, rgba(168,232,154,${0.15 + intensity * 0.55}) 0%, rgba(168,232,154,${0.08 + intensity * 0.3}) 100%)`
+                              : 'rgba(255,255,255,0.03)',
+                            border: intensity > 0
+                              ? `1px solid rgba(168,232,154,${0.2 + intensity * 0.3})`
+                              : '1px solid rgba(255,255,255,0.05)',
+                            boxShadow: intensity > 0.6 ? `0 0 12px rgba(168,232,154,${intensity * 0.25})` : 'none',
+                            outline: isToday ? '1px solid rgba(184,164,255,0.5)' : 'none',
+                            outlineOffset: isToday ? 2 : 0,
+                          }}
+                        />
+                      </div>
+                    );
+                  })}
+                </div>
+
+                {/* Legend */}
+                <div className="flex items-center justify-between mt-4">
+                  <span className="font-mono-stamp text-white/35">
+                    {new Date(heatDays[0].date).toLocaleDateString('en-US', { month: 'short', day: 'numeric' }).toUpperCase()}
+                  </span>
+                  <div className="flex items-center gap-1.5">
+                    <span className="font-mono-stamp text-white/35">LESS</span>
+                    {[0.15, 0.4, 0.65, 0.9].map((op, i) => (
                       <div
-                        className="w-full rounded-lg transition-all duration-500"
+                        key={i}
+                        className="w-2.5 h-2.5 rounded-sm"
                         style={{
-                          height: 40,
-                          background: intensity > 0
-                            ? `rgba(123,197,152,${0.1 + intensity * 0.5})`
-                            : 'rgba(255,255,255,0.04)',
-                          border: `1px solid ${intensity > 0 ? 'rgba(123,197,152,0.2)' : 'rgba(255,255,255,0.06)'}`,
+                          background: `rgba(168,232,154,${op})`,
+                          border: `1px solid rgba(168,232,154,${op * 0.5})`,
                         }}
                       />
-                      <span className="font-mono-stamp text-white/25">{dayName}</span>
-                    </div>
-                  );
-                })}
+                    ))}
+                    <span className="font-mono-stamp text-white/35">MORE</span>
+                  </div>
+                  <span className="font-mono-stamp text-white/35">TODAY</span>
+                </div>
+              </Card>
+
+              {/* Weekly summary tiles */}
+              <Hairline className="my-8" />
+              <SectionLabel accent="var(--ice)">THIS WEEK</SectionLabel>
+              <div className="grid grid-cols-3 gap-2.5">
+                <WeekStat label="REVENUE" value={weekRevenue} max={7} color="var(--mint)" />
+                <WeekStat label="ACTIONS" value={weekActions} max={21} color="var(--amethyst)" />
+                <WeekStat label="CONTENT" value={weekContent} max={7} color="var(--peach)" />
               </div>
             </motion.div>
           ) : (
@@ -272,61 +364,56 @@ export default function Progress() {
               initial={{ opacity: 0, x: 8 }}
               animate={{ opacity: 1, x: 0 }}
               exit={{ opacity: 0, x: -8 }}
-              transition={{ duration: 0.25, ease: [0.22, 1, 0.36, 1] }}
+              transition={{ duration: 0.3, ease: EASE }}
             >
-              {/* Weekly stats */}
-              <div className="grid grid-cols-3 gap-2.5 mb-6">
-                <div className="glass-card p-3 flex flex-col items-center gap-1">
-                  <ProgressRing value={weekRevenue} max={7} size={48} color="#7BC598" />
-                  <span className="font-mono-stamp text-white/30 text-center">REVENUE DAYS</span>
-                </div>
-                <div className="glass-card p-3 flex flex-col items-center gap-1">
-                  <ProgressRing value={weekActions} max={21} size={48} color="#E8E0D0" />
-                  <span className="font-mono-stamp text-white/30 text-center">ACTIONS</span>
-                </div>
-                <div className="glass-card p-3 flex flex-col items-center gap-1">
-                  <ProgressRing value={weekContent} max={7} size={48} color="#E8E0D0" />
-                  <span className="font-mono-stamp text-white/30 text-center">CONTENT</span>
-                </div>
-              </div>
-
-              {/* Weekly review form */}
-              <div className="mb-3">
-                <span className="font-mono-stamp text-white/30">Weekly Review</span>
-              </div>
-              <SectionCard>
+              <SectionLabel accent="var(--citrine)">WEEKLY REVIEW</SectionLabel>
+              <Card variant="elevated">
                 {[
-                  { key: 'produced', label: 'What produced results?' },
-                  { key: 'wasted', label: 'What wasted time?' },
-                  { key: 'remove', label: 'What to remove?' },
-                  { key: 'repeat', label: 'What to repeat?' },
-                  { key: 'scale', label: 'What to scale?' },
-                ].map(({ key, label }, i) => (
+                  { key: 'produced', label: 'What produced results?', color: 'var(--mint)' },
+                  { key: 'wasted', label: 'What wasted time?', color: 'var(--coral)' },
+                  { key: 'remove', label: 'What to remove?', color: 'var(--peach)' },
+                  { key: 'repeat', label: 'What to repeat?', color: 'var(--teal)' },
+                  { key: 'scale', label: 'What to scale?', color: 'var(--amethyst)' },
+                ].map(({ key, label, color }, i) => (
                   <div key={key}>
                     {i > 0 && <Hairline className="my-4" />}
-                    <p className="text-white/40 text-xs mb-2" style={{ fontFamily: 'var(--font-ui)' }}>{label}</p>
+                    <div className="flex items-center gap-2 mb-2">
+                      <span className="w-1 h-3 rounded-full" style={{ background: color, boxShadow: `0 0 8px ${color}` }} />
+                      <p
+                        className="text-white/60 text-sm"
+                        style={{ fontFamily: 'var(--font-ui)', fontWeight: 500 }}
+                      >
+                        {label}
+                      </p>
+                    </div>
                     <textarea
                       value={weekReview[key as keyof WeeklyReview]}
                       onChange={e => setWeekReview(prev => ({ ...prev, [key]: e.target.value }))}
                       placeholder="..."
                       rows={2}
-                      className="w-full bg-transparent text-[#F5F4F1] text-sm outline-none resize-none placeholder:text-white/15"
-                      style={{ fontFamily: 'var(--font-display)', fontWeight: 300, lineHeight: 1.6 }}
+                      className="w-full bg-transparent text-white outline-none resize-none placeholder:text-white/15"
+                      style={{
+                        fontFamily: 'var(--font-display)',
+                        fontWeight: 300,
+                        fontSize: '1rem',
+                        lineHeight: 1.6,
+                      }}
                     />
                   </div>
                 ))}
-                <Hairline className="mt-4 mb-4" />
+                <Hairline className="my-4" />
                 <div className="flex items-center justify-between">
                   {reviewSaved ? (
-                    <span className="text-sage text-xs" style={{ fontFamily: 'var(--font-mono)', fontSize: '0.6rem', letterSpacing: '0.1em' }}>
-                      SAVED ✓
+                    <span className="flex items-center gap-1.5 font-mono-stamp" style={{ color: 'var(--mint)' }}>
+                      <span className="pulse-dot" style={{ background: 'var(--mint)' }} />
+                      SAVED
                     </span>
                   ) : <span />}
-                  <button onClick={saveReview} className="btn-bone">
+                  <button onClick={saveReview} className="btn-primary">
                     Save Review
                   </button>
                 </div>
-              </SectionCard>
+              </Card>
             </motion.div>
           )}
         </AnimatePresence>
@@ -335,37 +422,57 @@ export default function Progress() {
   );
 }
 
-// ── Counter Row ───────────────────────────────────────────────
+// ── Sub-components ────────────────────────────────────────────
 function CounterRow({
-  label,
-  value,
-  onChange,
-  accent,
-  accentColor,
+  label, value, onChange, accentColor, target,
 }: {
   label: string;
   value: number;
   onChange: (v: number) => void;
-  accent: boolean;
   accentColor: string;
+  target: number;
 }) {
+  const hit = value >= target;
   return (
     <div className="flex items-center justify-between">
-      <span className="text-sm text-white/60" style={{ fontFamily: 'var(--font-ui)' }}>{label}</span>
-      <div className="flex items-center gap-3">
+      <div className="flex items-center gap-2.5 min-w-0">
+        <span
+          className="w-1 h-4 rounded-full flex-shrink-0 transition-all duration-300"
+          style={{
+            background: hit ? accentColor : 'rgba(255,255,255,0.12)',
+            boxShadow: hit ? `0 0 10px ${accentColor}` : 'none',
+          }}
+        />
+        <span
+          className="text-sm"
+          style={{
+            fontFamily: 'var(--font-ui)',
+            fontWeight: 500,
+            color: hit ? 'rgba(245,244,248,0.9)' : 'rgba(245,244,248,0.65)',
+          }}
+        >
+          {label}
+        </span>
+      </div>
+      <div className="flex items-center gap-2 flex-shrink-0">
         <button
           onClick={() => onChange(Math.max(0, value - 1))}
-          className="w-7 h-7 rounded-full flex items-center justify-center text-white/40 hover:text-white/70 transition-colors"
-          style={{ background: 'rgba(255,255,255,0.05)' }}
+          className="w-7 h-7 rounded-full flex items-center justify-center text-white/45 hover:text-white/80 transition-colors"
+          style={{
+            background: 'rgba(255,255,255,0.04)',
+            border: '1px solid rgba(255,255,255,0.08)',
+          }}
         >
           −
         </button>
         <span
-          className="text-xl w-6 text-center leading-none"
+          className="tabular-nums text-center leading-none"
           style={{
             fontFamily: 'var(--font-display)',
-            fontWeight: 500,
-            color: accent ? accentColor : '#F5F4F1',
+            fontWeight: 400,
+            fontSize: '1.4rem',
+            color: hit ? accentColor : '#F5F4F8',
+            minWidth: 24,
             transition: 'color 0.3s ease',
           }}
         >
@@ -373,12 +480,29 @@ function CounterRow({
         </span>
         <button
           onClick={() => onChange(value + 1)}
-          className="w-7 h-7 rounded-full flex items-center justify-center text-white/40 hover:text-white/70 transition-colors"
-          style={{ background: 'rgba(255,255,255,0.05)' }}
+          className="w-7 h-7 rounded-full flex items-center justify-center text-white/45 hover:text-white/80 transition-colors"
+          style={{
+            background: 'rgba(255,255,255,0.04)',
+            border: '1px solid rgba(255,255,255,0.08)',
+          }}
         >
           +
         </button>
       </div>
+    </div>
+  );
+}
+
+function WeekStat({ label, value, max, color }: { label: string; value: number; max: number; color: string }) {
+  return (
+    <div className="card-solid flex flex-col items-center gap-2 py-4">
+      <ProgressRing value={value} max={max} size={52} color={color} />
+      <span
+        className="font-mono-stamp"
+        style={{ color: 'rgba(245,244,248,0.55)', letterSpacing: '0.1em' }}
+      >
+        {label}
+      </span>
     </div>
   );
 }

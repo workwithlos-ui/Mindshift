@@ -1,9 +1,6 @@
 // ============================================================
-// TODAY SCREEN — Time-aware daily view
-// Morning: Core Identity affirmations
-// Midday: Focus & Control commands
-// Evening: Review questions
-// Always: Momentum Reset
+// TODAY SCREEN — Oracle Edition
+// Morning / Midday / Evening aware. Oura-level UI.
 // ============================================================
 
 import { useState, useEffect } from 'react';
@@ -22,26 +19,52 @@ import {
   Hairline,
   MomentumReset,
   MetricTile,
+  ScoreRing,
+  Card,
+  SectionLabel,
+  EASE,
 } from '@/components/ui-shared';
 import { getTodayProgress, saveTodayProgress, getTodaySessions } from '@/lib/storage';
 
-const TIME_LABELS: Record<TimeOfDay, string> = {
-  morning: 'MORNING PROTOCOL',
-  midday:  'MIDDAY RESET',
-  evening: 'EVENING REVIEW',
+// ── Time-of-day design config ────────────────────────────────
+type TimeConfig = {
+  label: string;
+  accent: string;
+  variant: 'amethyst' | 'teal' | 'peach' | 'mint' | 'coral';
+  sectionTitle: string;
 };
 
-const TIME_COLORS: Record<TimeOfDay, string> = {
-  morning: 'rgba(232,224,208,0.04)',
-  midday:  'rgba(100,140,200,0.04)',
-  evening: 'rgba(123,197,152,0.04)',
+const TIME_CONFIG: Record<TimeOfDay, TimeConfig> = {
+  morning: {
+    label: 'MORNING · CORE IDENTITY',
+    accent: 'var(--peach)',
+    variant: 'peach',
+    sectionTitle: 'CORE IDENTITY',
+  },
+  midday: {
+    label: 'MIDDAY · FOCUS & CONTROL',
+    accent: 'var(--amethyst)',
+    variant: 'amethyst',
+    sectionTitle: 'FOCUS COMMANDS',
+  },
+  evening: {
+    label: 'EVENING · REVIEW',
+    accent: 'var(--teal)',
+    variant: 'teal',
+    sectionTitle: 'EVENING REVIEW',
+  },
 };
 
-const BG_IMAGES: Record<TimeOfDay, string> = {
-  morning: 'https://d2xsxph8kpxj0f.cloudfront.net/91190584/JbwyyshxtMaKpm7nvUYhjz/hero-today-C2rS3Es56mLuQRLm43AtE6.webp',
-  midday:  'https://d2xsxph8kpxj0f.cloudfront.net/91190584/JbwyyshxtMaKpm7nvUYhjz/hero-execute-9xP7vWGJV8bpvPWaxiU6PC.webp',
-  evening: 'https://d2xsxph8kpxj0f.cloudfront.net/91190584/JbwyyshxtMaKpm7nvUYhjz/hero-journal-PSCsty5gkNgXCzgaLS2pso.webp',
-};
+// ── Day score calculation ────────────────────────────────────
+function calcDayScore(focusMin: number, actions: number, content: number, revenue: boolean, priority: boolean): number {
+  // Simple weighted score out of 100
+  const focusScore = Math.min(focusMin / 90, 1) * 30;       // 30 pts max
+  const actionScore = Math.min(actions / 5, 1) * 25;        // 25 pts max
+  const contentScore = Math.min(content / 2, 1) * 15;       // 15 pts max
+  const revenueScore = revenue ? 20 : 0;                    // 20 pts
+  const priorityScore = priority ? 10 : 0;                  // 10 pts
+  return Math.round(focusScore + actionScore + contentScore + revenueScore + priorityScore);
+}
 
 export default function Today() {
   const [time, setTime] = useState<TimeOfDay>(getTimeOfDay());
@@ -49,225 +72,335 @@ export default function Today() {
   const sessions = getTodaySessions();
   const totalFocusMin = Math.round(sessions.reduce((a, s) => a + s.duration, 0) / 60);
 
-  // Refresh time every minute
   useEffect(() => {
     const t = setInterval(() => setTime(getTimeOfDay()), 60_000);
     return () => clearInterval(t);
   }, []);
 
-  const affirmations = getTimeAffirmations(time);
+  const cfg = TIME_CONFIG[time];
+  const score = calcDayScore(
+    totalFocusMin,
+    progress.meaningfulActions,
+    progress.contentProduced,
+    progress.revenueMoved,
+    !!progress.priority,
+  );
 
   return (
     <motion.div
-      initial={{ opacity: 0, y: 6 }}
-      animate={{ opacity: 1, y: 0 }}
-      transition={{ duration: 0.3, ease: [0.22, 1, 0.36, 1] }}
-      className="min-h-screen relative"
+      initial={{ opacity: 0 }}
+      animate={{ opacity: 1 }}
+      transition={{ duration: 0.35, ease: EASE }}
+      className="min-h-screen relative safe-top"
     >
-      {/* Ambient background */}
-      <div
-        className="fixed inset-0 pointer-events-none"
-        style={{
-          backgroundImage: `url(${BG_IMAGES[time]})`,
-          backgroundSize: 'cover',
-          backgroundPosition: 'center top',
-          opacity: 0.18,
-          transition: 'opacity 1s ease',
-        }}
-      />
-      <div
-        className="fixed inset-0 pointer-events-none"
-        style={{ background: 'linear-gradient(to bottom, rgba(10,10,11,0.3) 0%, rgba(10,10,11,0.95) 60%)' }}
-      />
-
-      <div className="relative z-10 container pt-14 pb-32">
-        {/* Header */}
-        <div className="flex items-start justify-between mb-8">
-          <div>
-            <span
-              className="block text-[10px] tracking-[0.12em] uppercase mb-2"
-              style={{ fontFamily: 'var(--font-mono)', color: 'rgba(255,255,255,0.3)' }}
-            >
-              {formatStamp()} · {TIME_LABELS[time]}
-            </span>
-            <h1
-              className="text-[2rem] leading-[1.1] tracking-[-0.025em] text-[#F5F4F1]"
-              style={{ fontFamily: 'var(--font-display)', fontWeight: 500 }}
-            >
-              {getGreeting()}
-            </h1>
-            <p
-              className="mt-1 text-sm"
-              style={{ color: 'rgba(245,244,241,0.45)', fontFamily: 'var(--font-ui)' }}
-            >
+      <div className="container pt-8 pb-32">
+        {/* ── Header ─────────────────────────────────────── */}
+        <motion.div
+          initial={{ opacity: 0, y: 8 }}
+          animate={{ opacity: 1, y: 0 }}
+          transition={{ duration: 0.45, ease: EASE }}
+          className="flex items-start justify-between mb-8"
+        >
+          <div className="flex-1 min-w-0">
+            <div className="flex items-center gap-2 mb-2.5">
+              <span
+                className="w-1.5 h-1.5 rounded-full"
+                style={{
+                  background: cfg.accent,
+                  boxShadow: `0 0 12px ${cfg.accent}`,
+                }}
+              />
+              <span className="font-mono-stamp text-white/40">
+                {formatStamp()} · {cfg.label}
+              </span>
+            </div>
+            <h1 className="display-xl text-white">{getGreeting()}</h1>
+            <p className="mt-1 text-sm text-white/45" style={{ fontFamily: 'var(--font-ui)' }}>
               {formatDate()}
             </p>
           </div>
-          <MomentumReset />
-        </div>
+          <div className="pt-1 flex-shrink-0">
+            <MomentumReset />
+          </div>
+        </motion.div>
 
-        {/* Quick metrics row */}
-        <div className="grid grid-cols-3 gap-2.5 mb-7">
+        {/* ── Day Score Hero ─────────────────────────────── */}
+        <motion.div
+          initial={{ opacity: 0, y: 12 }}
+          animate={{ opacity: 1, y: 0 }}
+          transition={{ duration: 0.5, ease: EASE, delay: 0.1 }}
+          className="card-elevated p-6 mb-6 flex items-center gap-5 relative overflow-hidden"
+        >
+          {/* Glow ambient */}
+          <div
+            className="absolute inset-0 pointer-events-none opacity-60"
+            style={{
+              background:
+                'radial-gradient(circle at 0% 50%, rgba(184,164,255,0.08), transparent 50%)',
+            }}
+          />
+          <div className="relative">
+            <ScoreRing value={score} size={140} scoreLabel="DAY SCORE" label={scoreLabelText(score)} />
+          </div>
+          <div className="flex-1 min-w-0 relative">
+            <SectionLabel accent={cfg.accent}>TODAY'S SIGNAL</SectionLabel>
+            <p
+              className="mb-3 leading-snug"
+              style={{
+                fontFamily: 'var(--font-display)',
+                fontWeight: 400,
+                fontSize: '1.05rem',
+                color: 'rgba(245,244,248,0.92)',
+                letterSpacing: '-0.015em',
+              }}
+            >
+              {signalMessage(score, time)}
+            </p>
+            <div className="flex items-center gap-1.5">
+              <span className="pulse-dot" style={{ background: cfg.accent }} />
+              <span
+                className="font-mono-stamp"
+                style={{ color: cfg.accent, fontWeight: 600 }}
+              >
+                {scoreBadge(score)}
+              </span>
+            </div>
+          </div>
+        </motion.div>
+
+        {/* ── Quick Metrics ──────────────────────────────── */}
+        <motion.div
+          initial={{ opacity: 0, y: 8 }}
+          animate={{ opacity: 1, y: 0 }}
+          transition={{ duration: 0.45, ease: EASE, delay: 0.15 }}
+          className="grid grid-cols-3 gap-2.5 mb-8"
+        >
           <MetricTile
             label="FOCUS"
             value={totalFocusMin}
             unit="min"
             accent={totalFocusMin >= 60}
+            accentColor="var(--amethyst)"
           />
           <MetricTile
             label="ACTIONS"
             value={progress.meaningfulActions}
             accent={progress.meaningfulActions >= 3}
+            accentColor="var(--mint)"
           />
           <MetricTile
             label="CONTENT"
             value={progress.contentProduced}
             accent={progress.contentProduced >= 1}
+            accentColor="var(--peach)"
           />
-        </div>
+        </motion.div>
 
-        <Hairline className="mb-7" />
+        {/* ── Time-aware content ─────────────────────────── */}
+        <motion.div
+          initial={{ opacity: 0, y: 8 }}
+          animate={{ opacity: 1, y: 0 }}
+          transition={{ duration: 0.5, ease: EASE, delay: 0.2 }}
+          className="mb-8"
+        >
+          {time !== 'evening' ? (
+            <>
+              <SectionLabel accent={cfg.accent}>{cfg.sectionTitle}</SectionLabel>
+              <AffirmationCard
+                affirmations={getTimeAffirmations(time)}
+                accent={cfg.accent}
+                variant={cfg.variant}
+              />
+            </>
+          ) : (
+            <EveningReview
+              progress={progress}
+              onSave={p => { saveTodayProgress(p); setProgress(p); }}
+            />
+          )}
+        </motion.div>
 
-        {/* Time-aware content */}
-        {time !== 'evening' ? (
-          <>
-            <div className="mb-3 flex items-center justify-between">
-              <span
-                className="text-[10px] tracking-[0.1em] uppercase"
-                style={{ fontFamily: 'var(--font-mono)', color: 'rgba(255,255,255,0.3)' }}
-              >
-                {time === 'morning' ? 'Core Identity' : 'Focus Commands'}
-              </span>
-              <span
-                className="text-[10px]"
-                style={{ fontFamily: 'var(--font-mono)', color: 'rgba(255,255,255,0.2)' }}
-              >
-                swipe →
-              </span>
-            </div>
-            <AffirmationCard affirmations={affirmations} autoAdvance interval={7000} />
-          </>
-        ) : (
-          <EveningReview progress={progress} onSave={p => { saveTodayProgress(p); setProgress(p); }} />
-        )}
+        <Hairline className="mb-8" />
 
-        <Hairline className="my-7" />
-
-        {/* Priority for today */}
-        <TodayPriority
-          value={progress.priority}
-          onChange={v => {
-            const p = { ...progress, priority: v };
-            saveTodayProgress(p);
-            setProgress(p);
-          }}
-        />
-
-        {/* Revenue moved toggle */}
-        <div className="mt-5">
-          <button
-            onClick={() => {
-              const p = { ...progress, revenueMoved: !progress.revenueMoved };
+        {/* ── One Priority ───────────────────────────────── */}
+        <motion.div
+          initial={{ opacity: 0, y: 8 }}
+          animate={{ opacity: 1, y: 0 }}
+          transition={{ duration: 0.5, ease: EASE, delay: 0.25 }}
+          className="mb-5"
+        >
+          <SectionLabel accent="var(--citrine)">ONE PRIORITY</SectionLabel>
+          <TodayPriority
+            value={progress.priority}
+            onChange={v => {
+              const p = { ...progress, priority: v };
               saveTodayProgress(p);
               setProgress(p);
             }}
-            className="w-full flex items-center justify-between p-4 rounded-2xl transition-all duration-200"
-            style={{
-              background: progress.revenueMoved
-                ? 'rgba(123,197,152,0.1)'
-                : 'rgba(255,255,255,0.04)',
-              border: `1px solid ${progress.revenueMoved ? 'rgba(123,197,152,0.2)' : 'rgba(255,255,255,0.07)'}`,
-            }}
-          >
-            <div className="flex items-center gap-3">
-              <div
-                className="w-5 h-5 rounded-full flex items-center justify-center"
-                style={{
-                  background: progress.revenueMoved ? '#7BC598' : 'rgba(255,255,255,0.08)',
-                  border: progress.revenueMoved ? 'none' : '1px solid rgba(255,255,255,0.15)',
-                }}
-              >
-                {progress.revenueMoved && (
-                  <svg width="10" height="8" viewBox="0 0 10 8" fill="none">
-                    <path d="M1 4L3.5 6.5L9 1" stroke="#0A0A0B" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"/>
-                  </svg>
-                )}
-              </div>
-              <span
-                className="text-sm"
-                style={{
-                  fontFamily: 'var(--font-ui)',
-                  color: progress.revenueMoved ? '#7BC598' : 'rgba(255,255,255,0.6)',
-                }}
-              >
-                Revenue moved forward today
-              </span>
+          />
+        </motion.div>
+
+        {/* ── Revenue moved toggle ───────────────────────── */}
+        <motion.button
+          initial={{ opacity: 0, y: 8 }}
+          animate={{ opacity: 1, y: 0 }}
+          transition={{ duration: 0.5, ease: EASE, delay: 0.3 }}
+          onClick={() => {
+            const p = { ...progress, revenueMoved: !progress.revenueMoved };
+            saveTodayProgress(p);
+            setProgress(p);
+            if ('vibrate' in navigator) navigator.vibrate?.(8);
+          }}
+          className="w-full flex items-center justify-between p-4 rounded-2xl transition-all duration-300 hover:scale-[1.01]"
+          style={{
+            background: progress.revenueMoved
+              ? 'linear-gradient(135deg, rgba(168,232,154,0.14) 0%, rgba(111,200,94,0.05) 100%)'
+              : 'rgba(255,255,255,0.03)',
+            border: `1px solid ${progress.revenueMoved ? 'rgba(168,232,154,0.28)' : 'rgba(255,255,255,0.07)'}`,
+            boxShadow: progress.revenueMoved
+              ? '0 8px 32px -12px rgba(168,232,154,0.2)'
+              : 'none',
+          }}
+        >
+          <div className="flex items-center gap-3">
+            <div
+              className="w-6 h-6 rounded-full flex items-center justify-center transition-all duration-300"
+              style={{
+                background: progress.revenueMoved ? 'var(--mint)' : 'rgba(255,255,255,0.06)',
+                border: progress.revenueMoved ? 'none' : '1px solid rgba(255,255,255,0.12)',
+                boxShadow: progress.revenueMoved ? '0 0 16px rgba(168,232,154,0.4)' : 'none',
+              }}
+            >
+              {progress.revenueMoved && (
+                <svg width="11" height="9" viewBox="0 0 11 9" fill="none">
+                  <path d="M1 4.5L4 7L10 1" stroke="#0A0A0F" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"/>
+                </svg>
+              )}
             </div>
-            {progress.revenueMoved && (
-              <div className="sage-dot" />
-            )}
-          </button>
-        </div>
+            <span
+              className="text-sm"
+              style={{
+                fontFamily: 'var(--font-ui)',
+                fontWeight: 500,
+                color: progress.revenueMoved ? 'var(--mint)' : 'rgba(245,244,248,0.65)',
+              }}
+            >
+              Revenue moved forward today
+            </span>
+          </div>
+          {progress.revenueMoved && (
+            <span className="pulse-dot" style={{ background: 'var(--mint)' }} />
+          )}
+        </motion.button>
       </div>
     </motion.div>
   );
 }
 
-// ── Today Priority ────────────────────────────────────────────
+// ── Signal helpers ───────────────────────────────────────────
+function scoreLabelText(score: number): string {
+  if (score >= 85) return 'Optimal';
+  if (score >= 70) return 'Strong';
+  if (score >= 50) return 'Building';
+  if (score >= 25) return 'Warming';
+  return 'Begin';
+}
+
+function scoreBadge(score: number): string {
+  if (score >= 85) return 'OPTIMAL ZONE';
+  if (score >= 70) return 'ON TRACK';
+  if (score >= 50) return 'IN MOTION';
+  if (score >= 25) return 'WARMING UP';
+  return 'READY';
+}
+
+function signalMessage(score: number, time: TimeOfDay): string {
+  if (score >= 85) return "Peak execution. Protect the momentum.";
+  if (score >= 70) return "Strong rhythm today. Keep shipping.";
+  if (score >= 50) return "Building momentum. Don't stop now.";
+  if (score >= 25) return time === 'evening' ? "A quiet day. Reset tonight." : "Start small. One action moves you.";
+  return time === 'morning'
+    ? "Fresh canvas. One decisive action resets the day."
+    : time === 'midday'
+      ? "Begin now. Momentum compounds quickly."
+      : "Tomorrow is another chance to execute.";
+}
+
+// ── Today Priority ───────────────────────────────────────────
 function TodayPriority({ value, onChange }: { value: string; onChange: (v: string) => void }) {
   const [editing, setEditing] = useState(false);
   const [draft, setDraft] = useState(value);
 
   useEffect(() => { setDraft(value); }, [value]);
 
+  if (editing) {
+    return (
+      <Card variant="elevated" className="relative">
+        <input
+          autoFocus
+          value={draft}
+          onChange={e => setDraft(e.target.value)}
+          onBlur={() => { onChange(draft); setEditing(false); }}
+          onKeyDown={e => {
+            if (e.key === 'Enter') { onChange(draft); setEditing(false); }
+            if (e.key === 'Escape') setEditing(false);
+          }}
+          placeholder="What is the ONE thing that matters today?"
+          className="w-full bg-transparent text-white outline-none placeholder:text-white/25"
+          style={{
+            fontFamily: 'var(--font-display)',
+            fontWeight: 400,
+            fontSize: '1.15rem',
+            letterSpacing: '-0.02em',
+          }}
+        />
+      </Card>
+    );
+  }
+
   return (
-    <div>
-      <span
-        className="block text-[10px] tracking-[0.1em] uppercase mb-3"
-        style={{ fontFamily: 'var(--font-mono)', color: 'rgba(255,255,255,0.3)' }}
-      >
-        One Priority
-      </span>
-      {editing ? (
-        <div className="glass-card p-4">
-          <input
-            autoFocus
-            value={draft}
-            onChange={e => setDraft(e.target.value)}
-            onBlur={() => { onChange(draft); setEditing(false); }}
-            onKeyDown={e => { if (e.key === 'Enter') { onChange(draft); setEditing(false); } }}
-            placeholder="What is the ONE thing that matters today?"
-            className="w-full bg-transparent text-[#F5F4F1] text-base outline-none placeholder:text-white/25"
-            style={{ fontFamily: 'var(--font-display)', fontWeight: 400, fontSize: '1.1rem' }}
+    <button
+      onClick={() => setEditing(true)}
+      className="w-full text-left card-elevated p-5 transition-all duration-300 hover:scale-[1.005]"
+      style={{
+        borderColor: value ? 'rgba(255,224,138,0.2)' : 'rgba(255,255,255,0.09)',
+      }}
+    >
+      {value ? (
+        <div className="flex items-start gap-3">
+          <span
+            className="mt-1.5 w-1 h-5 rounded-full flex-shrink-0"
+            style={{ background: 'var(--citrine)', boxShadow: '0 0 12px var(--citrine)' }}
           />
+          <span
+            className="text-white leading-snug"
+            style={{
+              fontFamily: 'var(--font-display)',
+              fontWeight: 400,
+              fontSize: '1.15rem',
+              letterSpacing: '-0.02em',
+            }}
+          >
+            {value}
+          </span>
         </div>
       ) : (
-        <button
-          onClick={() => setEditing(true)}
-          className="w-full text-left glass-card p-4 transition-all duration-200 hover:border-white/15"
+        <span
+          className="text-white/30"
+          style={{
+            fontFamily: 'var(--font-display)',
+            fontWeight: 400,
+            fontSize: '1.1rem',
+          }}
         >
-          {value ? (
-            <span
-              className="text-[#F5F4F1] text-base leading-snug"
-              style={{ fontFamily: 'var(--font-display)', fontWeight: 400, fontSize: '1.1rem' }}
-            >
-              {value}
-            </span>
-          ) : (
-            <span
-              className="text-white/25 text-base"
-              style={{ fontFamily: 'var(--font-display)', fontWeight: 400, fontSize: '1.1rem' }}
-            >
-              Set your one priority →
-            </span>
-          )}
-        </button>
+          Set your one priority →
+        </span>
       )}
-    </div>
+    </button>
   );
 }
 
-// ── Evening Review ────────────────────────────────────────────
+// ── Evening Review ───────────────────────────────────────────
 function EveningReview({
   progress,
   onSave,
@@ -297,40 +430,68 @@ function EveningReview({
 
   if (done) {
     return (
-      <motion.div
-        initial={{ opacity: 0, y: 8 }}
-        animate={{ opacity: 1, y: 0 }}
-        className="glass-card p-6 text-center"
-      >
-        <div className="w-10 h-10 rounded-full flex items-center justify-center mx-auto mb-4"
-          style={{ background: 'rgba(123,197,152,0.12)', border: '1px solid rgba(123,197,152,0.2)' }}>
-          <span className="text-sage text-base">✓</span>
+      <Card variant="teal" className="text-center !p-8">
+        <div
+          className="w-14 h-14 rounded-full flex items-center justify-center mx-auto mb-5"
+          style={{
+            background: 'rgba(122,224,211,0.15)',
+            border: '1px solid rgba(122,224,211,0.3)',
+            boxShadow: '0 0 32px rgba(122,224,211,0.25)',
+          }}
+        >
+          <svg width="20" height="16" viewBox="0 0 20 16" fill="none">
+            <path d="M2 8L7 13L18 2" stroke="var(--teal)" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/>
+          </svg>
         </div>
-        <p className="text-[#F5F4F1] text-lg mb-1" style={{ fontFamily: 'var(--font-display)', fontWeight: 500 }}>
+        <p
+          className="mb-1.5"
+          style={{ fontFamily: 'var(--font-display)', fontWeight: 400, fontSize: '1.35rem', color: '#F5F4F8' }}
+        >
           Day reviewed.
         </p>
-        <p className="text-white/40 text-sm">Rest well. Tomorrow you execute again.</p>
-      </motion.div>
+        <p className="text-white/50 text-sm" style={{ fontFamily: 'var(--font-ui)' }}>
+          Rest well. Tomorrow you execute again.
+        </p>
+      </Card>
     );
   }
 
   return (
-    <div className="glass-card p-5">
-      <div className="flex items-center gap-2 mb-4">
-        <span className="font-mono-stamp text-white/30">
+    <Card variant="teal" className="!p-6">
+      <div className="flex items-center gap-2 mb-5">
+        <div className="flex gap-1.5">
+          {eveningReviewQuestions.map((_, idx) => (
+            <div
+              key={idx}
+              className="h-0.5 rounded-full transition-all duration-500"
+              style={{
+                width: idx === qIdx ? 24 : 8,
+                background: idx <= qIdx ? 'var(--teal)' : 'rgba(255,255,255,0.15)',
+              }}
+            />
+          ))}
+        </div>
+        <div className="flex-1" />
+        <span className="font-mono-stamp text-white/40">
           {qIdx + 1} / {eveningReviewQuestions.length}
         </span>
-        <div className="flex-1 h-px" style={{ background: 'rgba(255,255,255,0.07)' }} />
       </div>
+
       <AnimatePresence mode="wait">
         <motion.p
           key={qIdx}
-          initial={{ opacity: 0, y: 6 }}
+          initial={{ opacity: 0, y: 8 }}
           animate={{ opacity: 1, y: 0 }}
-          exit={{ opacity: 0, y: -6 }}
-          transition={{ duration: 0.25, ease: [0.22, 1, 0.36, 1] }}
-          className="text-xl mb-4 leading-snug"
-          style={{ fontFamily: 'var(--font-display)', fontWeight: 500, color: '#F5F4F1' }}
+          exit={{ opacity: 0, y: -8 }}
+          transition={{ duration: 0.3, ease: EASE }}
+          className="mb-4 leading-snug"
+          style={{
+            fontFamily: 'var(--font-display)',
+            fontWeight: 400,
+            fontSize: '1.35rem',
+            color: '#F5F4F8',
+            letterSpacing: '-0.025em',
+          }}
         >
           {q}
         </motion.p>
@@ -340,14 +501,12 @@ function EveningReview({
         onChange={e => setDraft(e.target.value)}
         placeholder="Your answer..."
         rows={3}
-        className="w-full bg-transparent text-white/80 text-sm outline-none resize-none placeholder:text-white/20 mb-4"
-        style={{ fontFamily: 'var(--font-ui)', lineHeight: 1.6 }}
+        className="w-full bg-transparent text-white outline-none resize-none placeholder:text-white/25 mb-5"
+        style={{ fontFamily: 'var(--font-ui)', fontSize: '0.95rem', lineHeight: 1.6 }}
       />
-      <button onClick={advance} className="btn-bone w-full text-center">
+      <button onClick={advance} className="btn-primary w-full">
         {qIdx < eveningReviewQuestions.length - 1 ? 'Next →' : 'Complete Review'}
       </button>
-    </div>
+    </Card>
   );
 }
-
-

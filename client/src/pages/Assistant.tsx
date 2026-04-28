@@ -1,13 +1,15 @@
 // ============================================================
-// ASSISTANT SCREEN — AI Chat powered by GPT-4.1-mini
-// Knows King's context. Agent roles. Streaming.
+// ASSISTANT SCREEN — Oracle Edition
+// Premium AI chat with amethyst accent + agent roles.
 // ============================================================
 
 import { useState, useRef, useEffect, useCallback } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { kingSystemPrompt, agents, type Agent } from '@/lib/content';
 import { streamChat, type ChatMessage } from '@/lib/ai';
-import { PageHeader, Hairline } from '@/components/ui-shared';
+import { PageHeader, Hairline, EASE } from '@/components/ui-shared';
+import { VoiceMic } from '@/components/VoiceMic';
+import { getMemory, appendMemory, getProfile } from '@/lib/storage';
 
 interface Message {
   id: string;
@@ -17,12 +19,21 @@ interface Message {
 }
 
 const QUICK_PROMPTS = [
-  "What's my highest-leverage action right now?",
-  "Help me write a content hook",
-  "Build me a simple automation workflow",
-  "Review my business strategy",
-  "What should I focus on today?",
+  { text: "What's my highest-leverage action right now?", icon: '→', accent: 'var(--amethyst)' },
+  { text: "Help me write a content hook", icon: '✎', accent: 'var(--peach)' },
+  { text: "Build me a simple automation workflow", icon: '⚙', accent: 'var(--ice)' },
+  { text: "Review my business strategy", icon: '◆', accent: 'var(--mint)' },
+  { text: "What should I focus on today?", icon: '◎', accent: 'var(--teal)' },
 ];
+
+const AGENT_COLORS: Record<string, string> = {
+  ceo: 'var(--amethyst)',
+  revenue: 'var(--mint)',
+  content: 'var(--peach)',
+  ops: 'var(--teal)',
+  mindset: 'var(--ice)',
+  fitness: 'var(--coral)',
+};
 
 export default function Assistant({
   initialAgent,
@@ -31,8 +42,17 @@ export default function Assistant({
   initialAgent: Agent | null;
   onAgentClear: () => void;
 }) {
-  const [messages, setMessages] = useState<Message[]>([]);
+  // Rehydrate last 20 turns from persistent memory on first mount
+  const [messages, setMessages] = useState<Message[]>(() => {
+    const mem = getMemory().slice(-20);
+    return mem.map((m, i) => ({
+      id: `mem_${i}_${m.ts}`,
+      role: m.role,
+      content: m.content,
+    }));
+  });
   const [input, setInput] = useState('');
+  const [interimInput, setInterimInput] = useState('');
   const [loading, setLoading] = useState(false);
   const [activeAgent, setActiveAgent] = useState<Agent | null>(initialAgent);
   const [showAgents, setShowAgents] = useState(false);
@@ -40,14 +60,13 @@ export default function Assistant({
   const bottomRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLTextAreaElement>(null);
 
-  // Sync initial agent
   useEffect(() => {
     setActiveAgent(initialAgent);
     if (initialAgent) {
       setMessages([{
         id: 'welcome',
         role: 'assistant',
-        content: `${initialAgent.name} Agent activated. What do you need?`,
+        content: `${initialAgent.name} activated. What do you need?`,
       }]);
     }
   }, [initialAgent]);
@@ -57,10 +76,15 @@ export default function Assistant({
   }, [messages]);
 
   const getSystemPrompt = useCallback(() => {
-    if (activeAgent) {
-      return `${kingSystemPrompt}\n\n---\n\nCurrent role: ${activeAgent.prompt}`;
+    let base = kingSystemPrompt;
+    const profile = getProfile();
+    if (profile.notes.length) {
+      base += `\n\n---\n\nLong-term context about King (always remember):\n- ${profile.notes.join('\n- ')}`;
     }
-    return kingSystemPrompt;
+    if (activeAgent) {
+      base += `\n\n---\n\nCurrent role: ${activeAgent.prompt}`;
+    }
+    return base;
   }, [activeAgent]);
 
   const sendMessage = useCallback(async (text: string) => {
@@ -71,7 +95,9 @@ export default function Assistant({
     const aiMsg: Message = { id: aiId, role: 'assistant', content: '', streaming: true };
 
     setMessages(prev => [...prev, userMsg, aiMsg]);
+    appendMemory({ role: 'user', content: text.trim(), ts: Date.now() });
     setInput('');
+    setInterimInput('');
     setLoading(true);
 
     const history: ChatMessage[] = [
@@ -90,9 +116,14 @@ export default function Assistant({
         ));
       },
       () => {
-        setMessages(prev => prev.map(m =>
-          m.id === aiId ? { ...m, streaming: false } : m
-        ));
+        setMessages(prev => {
+          const done = prev.map(m => m.id === aiId ? { ...m, streaming: false } : m);
+          const final = done.find(m => m.id === aiId);
+          if (final && final.content) {
+            appendMemory({ role: 'assistant', content: final.content, ts: Date.now() });
+          }
+          return done;
+        });
         setLoading(false);
       },
       (err) => {
@@ -118,76 +149,89 @@ export default function Assistant({
     onAgentClear();
     abortRef.current?.abort();
     setLoading(false);
+    // Keep long-term memory; just clear the visible thread.
   };
+
+  const agentAccent = activeAgent ? AGENT_COLORS[activeAgent.id] ?? 'var(--amethyst)' : 'var(--amethyst)';
 
   return (
     <motion.div
-      initial={{ opacity: 0, y: 6 }}
-      animate={{ opacity: 1, y: 0 }}
-      transition={{ duration: 0.3, ease: [0.22, 1, 0.36, 1] }}
-      className="min-h-screen flex flex-col"
+      initial={{ opacity: 0 }}
+      animate={{ opacity: 1 }}
+      transition={{ duration: 0.35, ease: EASE }}
+      className="min-h-screen flex flex-col safe-top"
     >
-      {/* Header */}
-      <div className="container pt-14">
-        <div className="flex items-start justify-between mb-2">
-          <div>
-            <span
-              className="block text-[10px] tracking-[0.12em] uppercase mb-2"
-              style={{ fontFamily: 'var(--font-mono)', color: 'rgba(255,255,255,0.3)' }}
-            >
-              ASSISTANT · AI CHIEF OF STAFF
-            </span>
-            <h1
-              className="text-[1.6rem] leading-[1.15] tracking-[-0.025em] text-[#F5F4F1]"
-              style={{ fontFamily: 'var(--font-display)', fontWeight: 500 }}
-            >
-              {activeAgent ? `${activeAgent.name} Agent` : 'MindShift AI'}
-            </h1>
-          </div>
-          <div className="flex items-center gap-2 pt-1">
-            {/* Agent selector */}
-            <button
-              onClick={() => setShowAgents(!showAgents)}
-              className="px-3 py-1.5 rounded-full text-xs transition-all duration-200"
-              style={{
-                fontFamily: 'var(--font-ui)',
-                fontSize: '0.7rem',
-                background: showAgents ? '#E8E0D0' : 'rgba(255,255,255,0.06)',
-                color: showAgents ? '#0A0A0B' : 'rgba(255,255,255,0.5)',
-                border: showAgents ? 'none' : '1px solid rgba(255,255,255,0.08)',
-              }}
-            >
-              Agents
-            </button>
-            {messages.length > 0 && (
+      <div className="container pt-8">
+        <PageHeader
+          stamp="ASSISTANT · AI CHIEF OF STAFF"
+          title={activeAgent ? activeAgent.name : 'Oracle.'}
+          subtitle={activeAgent ? activeAgent.description : 'Think together. Decide faster. Execute sharper.'}
+          accent={agentAccent}
+          right={
+            <div className="flex items-center gap-2">
               <button
-                onClick={clearChat}
-                className="px-3 py-1.5 rounded-full text-xs text-white/30 hover:text-white/60 transition-colors"
-                style={{ fontFamily: 'var(--font-ui)', fontSize: '0.7rem', background: 'rgba(255,255,255,0.04)', border: '1px solid rgba(255,255,255,0.07)' }}
+                onClick={() => setShowAgents(!showAgents)}
+                className="px-3 py-1.5 rounded-full transition-all duration-300"
+                style={{
+                  fontFamily: 'var(--font-mono)',
+                  fontSize: '0.68rem',
+                  fontWeight: 600,
+                  letterSpacing: '0.1em',
+                  background: showAgents
+                    ? 'linear-gradient(180deg, #C9B8FF 0%, #A68FFF 100%)'
+                    : 'rgba(255,255,255,0.04)',
+                  color: showAgents ? '#0A0A0F' : 'rgba(245,244,248,0.55)',
+                  border: showAgents ? 'none' : '1px solid rgba(255,255,255,0.08)',
+                  boxShadow: showAgents ? '0 4px 12px rgba(184,164,255,0.25)' : 'none',
+                }}
               >
-                Clear
+                AGENTS
               </button>
-            )}
-          </div>
-        </div>
+              {messages.length > 0 && (
+                <button
+                  onClick={clearChat}
+                  className="px-3 py-1.5 rounded-full font-mono-stamp text-white/40 hover:text-white/70 transition-colors"
+                  style={{
+                    background: 'rgba(255,255,255,0.03)',
+                    border: '1px solid rgba(255,255,255,0.07)',
+                  }}
+                >
+                  CLEAR
+                </button>
+              )}
+            </div>
+          }
+        />
 
         {/* Active agent badge */}
         {activeAgent && (
-          <div
-            className="flex items-center gap-2 py-2 px-3 rounded-xl mb-4 w-fit"
-            style={{ background: 'rgba(232,224,208,0.07)', border: '1px solid rgba(232,224,208,0.12)' }}
+          <motion.div
+            initial={{ opacity: 0, y: -4 }}
+            animate={{ opacity: 1, y: 0 }}
+            className="flex items-center gap-2 py-1.5 px-3 rounded-full mb-5 w-fit"
+            style={{
+              background: `linear-gradient(135deg, ${agentAccent}22 0%, ${agentAccent}08 100%)`,
+              border: `1px solid ${agentAccent}44`,
+            }}
           >
-            <span className="text-bone text-sm">{activeAgent.icon}</span>
-            <span className="text-bone/70 text-xs" style={{ fontFamily: 'var(--font-ui)' }}>
-              {activeAgent.name} Agent active
+            <span className="pulse-dot" style={{ background: agentAccent }} />
+            <span
+              className="text-xs"
+              style={{
+                fontFamily: 'var(--font-ui)',
+                fontWeight: 500,
+                color: agentAccent,
+              }}
+            >
+              {activeAgent.name} active
             </span>
             <button
               onClick={() => { setActiveAgent(null); onAgentClear(); }}
-              className="text-white/25 hover:text-white/50 transition-colors text-xs ml-1"
+              className="text-white/40 hover:text-white/70 transition-colors text-xs ml-1"
             >
               ×
             </button>
-          </div>
+          </motion.div>
         )}
 
         {/* Agent selector dropdown */}
@@ -197,54 +241,72 @@ export default function Assistant({
               initial={{ opacity: 0, y: -8, scale: 0.97 }}
               animate={{ opacity: 1, y: 0, scale: 1 }}
               exit={{ opacity: 0, y: -8, scale: 0.97 }}
-              transition={{ duration: 0.2, ease: [0.22, 1, 0.36, 1] }}
-              className="rounded-2xl p-3 mb-4"
-              style={{ background: 'rgba(17,17,19,0.95)', border: '1px solid rgba(255,255,255,0.1)', backdropFilter: 'blur(20px)' }}
+              transition={{ duration: 0.25, ease: EASE }}
+              className="card-elevated p-2 mb-5"
             >
-              <div className="grid grid-cols-1 gap-1.5">
-                {agents.map(agent => (
-                  <button
-                    key={agent.id}
-                    onClick={() => {
-                      setActiveAgent(agent);
-                      setShowAgents(false);
-                      setMessages([{
-                        id: `welcome_${agent.id}`,
-                        role: 'assistant',
-                        content: `${agent.name} Agent activated. ${agent.description}. What do you need?`,
-                      }]);
-                    }}
-                    className="flex items-center gap-3 p-2.5 rounded-xl text-left transition-all duration-150"
-                    style={{
-                      background: activeAgent?.id === agent.id ? 'rgba(232,224,208,0.08)' : 'transparent',
-                    }}
-                  >
-                    <span className="text-bone/60 text-sm w-5 text-center">{agent.icon}</span>
-                    <div>
-                      <p className="text-[#F5F4F1] text-xs font-medium" style={{ fontFamily: 'var(--font-ui)' }}>
-                        {agent.name}
-                      </p>
-                      <p className="text-white/30 text-xs" style={{ fontFamily: 'var(--font-ui)' }}>
-                        {agent.description}
-                      </p>
-                    </div>
-                  </button>
-                ))}
+              <div className="grid grid-cols-1 gap-1">
+                {agents.map(agent => {
+                  const color = AGENT_COLORS[agent.id] ?? 'var(--amethyst)';
+                  const isActive = activeAgent?.id === agent.id;
+                  return (
+                    <button
+                      key={agent.id}
+                      onClick={() => {
+                        setActiveAgent(agent);
+                        setShowAgents(false);
+                        setMessages([{
+                          id: `welcome_${agent.id}`,
+                          role: 'assistant',
+                          content: `${agent.name} activated. ${agent.description}. What do you need?`,
+                        }]);
+                      }}
+                      className="flex items-center gap-3 p-2.5 rounded-xl text-left transition-all duration-200 hover:scale-[1.005]"
+                      style={{
+                        background: isActive ? `${color}15` : 'transparent',
+                        border: isActive ? `1px solid ${color}40` : '1px solid transparent',
+                      }}
+                    >
+                      <div
+                        className="w-2 h-2 rounded-full flex-shrink-0"
+                        style={{ background: color, boxShadow: `0 0 8px ${color}` }}
+                      />
+                      <div className="min-w-0 flex-1">
+                        <p
+                          className="text-[#F5F4F8] text-sm"
+                          style={{ fontFamily: 'var(--font-ui)', fontWeight: 500 }}
+                        >
+                          {agent.name}
+                        </p>
+                        <p
+                          className="text-white/40 text-xs truncate"
+                          style={{ fontFamily: 'var(--font-ui)' }}
+                        >
+                          {agent.description}
+                        </p>
+                      </div>
+                    </button>
+                  );
+                })}
               </div>
             </motion.div>
           )}
         </AnimatePresence>
 
-        <Hairline className="mb-4" />
+        <Hairline className="mb-5" />
       </div>
 
       {/* Messages */}
-      <div className="flex-1 container pb-4 no-scrollbar">
+      <div className="flex-1 container pb-4">
         {messages.length === 0 ? (
-          <div className="py-8">
+          <div className="py-4">
             <p
-              className="text-white/25 text-center mb-6 text-base"
-              style={{ fontFamily: 'var(--font-display)', fontWeight: 400 }}
+              className="text-white/35 mb-5 text-center"
+              style={{
+                fontFamily: 'var(--font-display)',
+                fontWeight: 400,
+                fontSize: '1.1rem',
+                letterSpacing: '-0.02em',
+              }}
             >
               Your chief of staff is ready.
             </p>
@@ -254,49 +316,86 @@ export default function Assistant({
                   key={i}
                   initial={{ opacity: 0, y: 6 }}
                   animate={{ opacity: 1, y: 0 }}
-                  transition={{ delay: i * 0.07, duration: 0.3, ease: [0.22, 1, 0.36, 1] }}
-                  onClick={() => sendMessage(prompt)}
-                  className="w-full text-left p-3.5 rounded-xl transition-all duration-200"
+                  transition={{ delay: i * 0.05, duration: 0.35, ease: EASE }}
+                  onClick={() => sendMessage(prompt.text)}
+                  className="w-full text-left p-3.5 rounded-2xl transition-all duration-300 hover:scale-[1.005] group flex items-center gap-3"
                   style={{
                     background: 'rgba(255,255,255,0.03)',
                     border: '1px solid rgba(255,255,255,0.07)',
                   }}
                 >
-                  <span className="text-white/50 text-sm" style={{ fontFamily: 'var(--font-ui)' }}>
-                    {prompt}
+                  <span
+                    className="w-7 h-7 rounded-lg flex items-center justify-center flex-shrink-0 text-sm"
+                    style={{
+                      background: `${prompt.accent}15`,
+                      border: `1px solid ${prompt.accent}30`,
+                      color: prompt.accent,
+                    }}
+                  >
+                    {prompt.icon}
                   </span>
+                  <span
+                    className="text-white/65 text-sm flex-1"
+                    style={{ fontFamily: 'var(--font-ui)', fontWeight: 400 }}
+                  >
+                    {prompt.text}
+                  </span>
+                  <svg
+                    width="12" height="12" viewBox="0 0 12 12" fill="none"
+                    className="flex-shrink-0 transition-transform duration-300 group-hover:translate-x-0.5"
+                    style={{ color: 'rgba(245,244,248,0.25)' }}
+                  >
+                    <path d="M4 2L8 6L4 10" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"/>
+                  </svg>
                 </motion.button>
               ))}
             </div>
           </div>
         ) : (
-          <div className="space-y-4 py-2">
+          <div className="space-y-3 py-2">
             <AnimatePresence initial={false}>
               {messages.map(msg => (
                 <motion.div
                   key={msg.id}
                   initial={{ opacity: 0, y: 8 }}
                   animate={{ opacity: 1, y: 0 }}
-                  transition={{ duration: 0.25, ease: [0.22, 1, 0.36, 1] }}
+                  transition={{ duration: 0.3, ease: EASE }}
                   className={`flex ${msg.role === 'user' ? 'justify-end' : 'justify-start'}`}
                 >
                   <div
-                    className={`max-w-[85%] px-4 py-3 ${msg.role === 'user' ? 'chat-bubble-user' : 'chat-bubble-ai'}`}
+                    className={`max-w-[86%] px-4 py-3 rounded-2xl ${msg.role === 'user' ? '' : ''}`}
+                    style={msg.role === 'user' ? {
+                      background: 'linear-gradient(180deg, rgba(184,164,255,0.14) 0%, rgba(122,92,232,0.08) 100%)',
+                      border: '1px solid rgba(184,164,255,0.22)',
+                      borderBottomRightRadius: '6px',
+                    } : {
+                      background: 'rgba(255,255,255,0.04)',
+                      border: '1px solid rgba(255,255,255,0.08)',
+                      borderBottomLeftRadius: '6px',
+                    }}
                   >
                     {msg.role === 'assistant' && (
                       <div className="flex items-center gap-1.5 mb-2">
                         <span
-                          className="text-[9px] tracking-[0.1em] uppercase"
-                          style={{ fontFamily: 'var(--font-mono)', color: '#E8E0D0', opacity: 0.5 }}
+                          className="pulse-dot"
+                          style={{
+                            background: agentAccent,
+                            opacity: msg.streaming ? 1 : 0.6,
+                          }}
+                        />
+                        <span
+                          className="font-mono-stamp"
+                          style={{ color: agentAccent, fontWeight: 600 }}
                         >
-                          {activeAgent ? activeAgent.name : 'MindShift'}
+                          {activeAgent ? activeAgent.name.toUpperCase() : 'MINDSHIFT'}
                         </span>
                         {msg.streaming && (
-                          <span className="inline-flex gap-0.5">
+                          <span className="inline-flex gap-0.5 ml-1">
                             {[0,1,2].map(i => (
                               <motion.span
                                 key={i}
-                                className="w-1 h-1 rounded-full bg-bone/40"
+                                className="w-1 h-1 rounded-full"
+                                style={{ background: agentAccent }}
                                 animate={{ opacity: [0.3, 1, 0.3] }}
                                 transition={{ duration: 1.2, repeat: Infinity, delay: i * 0.2 }}
                               />
@@ -306,8 +405,12 @@ export default function Assistant({
                       </div>
                     )}
                     <p
-                      className="text-[#F5F4F1] text-sm leading-relaxed whitespace-pre-wrap"
-                      style={{ fontFamily: 'var(--font-ui)', lineHeight: 1.65 }}
+                      className="text-sm leading-relaxed whitespace-pre-wrap"
+                      style={{
+                        fontFamily: 'var(--font-ui)',
+                        lineHeight: 1.65,
+                        color: msg.role === 'user' ? 'rgba(245,244,248,0.95)' : 'rgba(245,244,248,0.88)',
+                      }}
                     >
                       {msg.content || (msg.streaming ? '' : '...')}
                     </p>
@@ -322,50 +425,75 @@ export default function Assistant({
 
       {/* Input */}
       <div
-        className="sticky bottom-0 left-0 right-0 pb-24"
-        style={{ background: 'linear-gradient(to top, rgba(10,10,11,1) 60%, transparent)' }}
+        className="sticky bottom-0 left-0 right-0 pb-24 z-10"
+        style={{ background: 'linear-gradient(to top, rgba(10,10,15,1) 65%, transparent)' }}
       >
-        <div className="container">
+        <div className="container pt-3">
           <div
-            className="flex items-end gap-3 p-3 rounded-2xl"
+            className="flex items-end gap-2 p-2.5 rounded-2xl"
             style={{
-              background: 'rgba(17,17,19,0.95)',
+              background: 'rgba(20,20,28,0.9)',
               border: '1px solid rgba(255,255,255,0.1)',
               backdropFilter: 'blur(20px)',
+              WebkitBackdropFilter: 'blur(20px)',
+              boxShadow: '0 8px 32px -8px rgba(0,0,0,0.5)',
             }}
           >
             <textarea
               ref={inputRef}
-              value={input}
+              value={input + (interimInput ? (input.endsWith(' ') || !input ? '' : ' ') + interimInput : '')}
               onChange={e => {
                 setInput(e.target.value);
+                setInterimInput('');
                 e.target.style.height = 'auto';
                 e.target.style.height = Math.min(e.target.scrollHeight, 120) + 'px';
               }}
               onKeyDown={handleKeyDown}
-              placeholder="Ask anything..."
+              placeholder={activeAgent ? `Ask ${activeAgent.name}…` : 'Ask anything…'}
               rows={1}
-              className="flex-1 bg-transparent text-[#F5F4F1] text-sm outline-none resize-none placeholder:text-white/25 leading-relaxed"
-              style={{ fontFamily: 'var(--font-ui)', lineHeight: 1.5, maxHeight: 120 }}
+              className="flex-1 bg-transparent outline-none resize-none placeholder:text-white/25 py-1.5 px-2"
+              style={{
+                fontFamily: 'var(--font-ui)',
+                fontSize: '0.95rem',
+                lineHeight: 1.5,
+                maxHeight: 120,
+                color: '#F5F4F8',
+              }}
+            />
+            <VoiceMic
+              onFinalText={(t) => { setInput(prev => (prev + t).trimStart()); setInterimInput(''); }}
+              onInterimText={(t) => setInterimInput(t)}
+              color={agentAccent}
+              size={40}
+              disabled={loading}
             />
             <button
               onClick={() => sendMessage(input)}
               disabled={!input.trim() || loading}
-              className="w-9 h-9 rounded-xl flex items-center justify-center flex-shrink-0 transition-all duration-200 disabled:opacity-30"
+              className="w-10 h-10 rounded-xl flex items-center justify-center flex-shrink-0 transition-all duration-300 disabled:opacity-30"
               style={{
-                background: input.trim() && !loading ? '#E8E0D0' : 'rgba(255,255,255,0.08)',
+                background: input.trim() && !loading
+                  ? `linear-gradient(135deg, ${agentAccent} 0%, ${agentAccent}CC 100%)`
+                  : 'rgba(255,255,255,0.06)',
+                boxShadow: input.trim() && !loading ? `0 4px 16px ${agentAccent}40` : 'none',
               }}
             >
               {loading ? (
                 <motion.div
-                  className="w-3 h-3 rounded-full border border-current border-t-transparent"
+                  className="w-3.5 h-3.5 rounded-full border-2 border-current border-t-transparent"
                   animate={{ rotate: 360 }}
                   transition={{ duration: 0.8, repeat: Infinity, ease: 'linear' }}
-                  style={{ color: '#0A0A0B' }}
+                  style={{ color: '#0A0A0F' }}
                 />
               ) : (
-                <svg width="14" height="14" viewBox="0 0 14 14" fill="none">
-                  <path d="M7 12V2M7 2L2 7M7 2L12 7" stroke={input.trim() ? '#0A0A0B' : '#fff'} strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"/>
+                <svg width="16" height="16" viewBox="0 0 16 16" fill="none">
+                  <path
+                    d="M8 13V3M8 3L3 8M8 3L13 8"
+                    stroke={input.trim() ? '#0A0A0F' : 'rgba(255,255,255,0.5)'}
+                    strokeWidth="1.8"
+                    strokeLinecap="round"
+                    strokeLinejoin="round"
+                  />
                 </svg>
               )}
             </button>

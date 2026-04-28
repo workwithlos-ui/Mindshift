@@ -205,3 +205,33 @@ Your role:
 - Speak like a trusted chief of staff, not a generic AI assistant
 
 When King asks for help, give him the most actionable, direct answer possible. If he needs a plan, make it executable. If he needs copy, make it sharp. If he needs strategy, make it specific.`;
+
+// ── Expansion Mode (unlocks after 7-day streak) ─────────────
+// Architect OS sections 7–11: execution sequence, rules,
+// tracking, enforcement logic, expansion mode directives.
+export const expansionAffirmations = [
+  "I operate from evidence, not emotion.",
+  "I scale what is already working.",
+  "I delegate what does not require me.",
+  "I raise my standard every quarter.",
+  "My systems produce results without my constant presence.",
+  "I build assets that compound while I sleep.",
+  "I treat my attention as the most valuable currency.",
+  "I say no to anything that does not multiply output.",
+];
+
+export const expansionDirectives = [
+  "Audit this week: what produced? What drained?",
+  "Double down on the one lever that moved the most.",
+  "Remove or automate one task you repeated this week.",
+  "Document the process so it can run without you.",
+  "Raise the standard on a single metric by 20%.",
+];
+
+export const enforcementRules = [
+  "Revenue before reach. Reach before reset.",
+  "One priority per day. Finish it before anything else.",
+  "No input without output. Consume only after you produce.",
+  "Body first. Train or walk before the screen.",
+  "If stuck for 15 minutes, reset. Then continue.",
+];
