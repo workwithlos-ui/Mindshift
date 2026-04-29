@@ -276,3 +276,14 @@ export async function pullMemory<T>(scope: string): Promise<T | null> {
   if (error || !data) return null;
   return data.payload as T;
 }
+
+// ============================================================
+// PASSWORD RESET
+// ============================================================
+export async function resetPasswordForEmail(email: string): Promise<{ ok: boolean; error?: string }> {
+  if (!client) return { ok: false, error: 'Supabase not configured.' };
+  const redirectTo = `${window.location.origin}/?reset=1`;
+  const { error } = await client.auth.resetPasswordForEmail(email.trim(), { redirectTo });
+  if (error) return { ok: false, error: error.message };
+  return { ok: true };
+}
