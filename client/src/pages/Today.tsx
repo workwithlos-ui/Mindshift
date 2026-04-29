@@ -24,6 +24,7 @@ import {
   SectionLabel,
   EASE,
 } from '@/components/ui-shared';
+import { TeamBrief } from '@/components/TeamBrief';
 import { getTodayProgress, saveTodayProgress, getTodaySessions, getUserProfile } from '@/lib/storage';
 import { getBriefing } from '@/lib/personalization';
 
@@ -247,7 +248,10 @@ export default function Today() {
           )}
         </motion.div>
 
-        <Hairline className="mb-8" />
+        <Hairline className="mb-6" />
+
+        {/* ── Team Brief (proactive insights) ──────────── */}
+        <TeamBrief />
 
         {/* ── One Priority ───────────────────────────────── */}
         <motion.div

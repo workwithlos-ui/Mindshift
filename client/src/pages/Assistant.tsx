@@ -1,40 +1,59 @@
 // ============================================================
-// ASSISTANT SCREEN — Oracle Edition
-// Premium AI chat with amethyst accent + agent roles.
+// MINDSHIFT AI — ASSISTANT (Intelligence Edition)
+// - 7 specialized agents with deep system prompts
+// - 3-tier memory (session / persistent / behavioral)
+// - Agent auto-routing
+// - Cross-agent handoffs via [→agent] tags
+// - Prompt chaining for multi-step tasks
+// - Lightweight response evaluator with retry
+// - Engagement tracking per agent
 // ============================================================
 
-import { useState, useRef, useEffect, useCallback } from 'react';
+import { useState, useRef, useEffect, useCallback, useMemo } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
-import { kingSystemPrompt, agents, type Agent } from '@/lib/content';
-import { streamChat, type ChatMessage } from '@/lib/ai';
+import { AGENTS, AGENT_ORDER, routeAgent, type AgentId, type AgentDef } from '@/lib/agents';
+import { buildAgentContext, getSessionTurns } from '@/lib/memory';
+import {
+  addHandoff, parseHandoffs, stripHandoffs, getHandoffsFor, markConsumed,
+  addInsight,
+} from '@/lib/agentContext';
+import { matchChain, buildChainStepPrompt, type ChainPlan } from '@/lib/chain';
+import { evaluateResponse, recordAsk, recordFollowUp } from '@/lib/evaluator';
+import { streamChat, singleChat, type ChatMessage } from '@/lib/ai';
 import { PageHeader, Hairline, EASE } from '@/components/ui-shared';
 import { VoiceMic } from '@/components/VoiceMic';
-import { getMemory, appendMemory, getProfile } from '@/lib/storage';
-import { getAIContext } from '@/lib/personalization';
+import { appendMemory } from '@/lib/storage';
+import { type Agent } from '@/lib/content';
+
+// Bridge between legacy `Agent` type (still used by Execute.tsx)
+// and the new AgentId system. Matches by id.
+function legacyToNewId(legacy: Agent | null): AgentId | null {
+  if (!legacy) return null;
+  if ((AGENT_ORDER as string[]).includes(legacy.id)) return legacy.id as AgentId;
+  // Map old 'ceo', 'revenue', 'content', 'ops' to new equivalents
+  const map: Record<string, AgentId> = {
+    ceo: 'research', revenue: 'growth', content: 'marketing', ops: 'build',
+  };
+  return map[legacy.id] ?? 'research';
+}
 
 interface Message {
   id: string;
   role: 'user' | 'assistant';
   content: string;
+  agent?: AgentId;
   streaming?: boolean;
+  chainStep?: { planName: string; step: number; total: number };
+  evalScore?: number;
 }
 
-const QUICK_PROMPTS = [
-  { text: "What's my highest-leverage action right now?", icon: '→', accent: 'var(--amethyst)' },
-  { text: "Help me write a content hook", icon: '✎', accent: 'var(--peach)' },
-  { text: "Build me a simple automation workflow", icon: '⚙', accent: 'var(--ice)' },
-  { text: "Review my business strategy", icon: '◆', accent: 'var(--mint)' },
-  { text: "What should I focus on today?", icon: '◎', accent: 'var(--teal)' },
+const QUICK_PROMPTS: { text: string; agent: AgentId }[] = [
+  { text: "What's my highest-leverage action right now?", agent: 'growth' },
+  { text: 'Draft 3 hooks for a post about execution', agent: 'marketing' },
+  { text: 'Audit my last 7 days — what does the data say?', agent: 'analytics' },
+  { text: 'Break down my current build into weekly milestones', agent: 'build' },
+  { text: "I'm stuck. Reset me.", agent: 'mindset' },
 ];
-
-const AGENT_COLORS: Record<string, string> = {
-  ceo: 'var(--amethyst)',
-  revenue: 'var(--mint)',
-  content: 'var(--peach)',
-  ops: 'var(--teal)',
-  mindset: 'var(--ice)',
-  fitness: 'var(--coral)',
-};
 
 export default function Assistant({
   initialAgent,
@@ -43,9 +62,9 @@ export default function Assistant({
   initialAgent: Agent | null;
   onAgentClear: () => void;
 }) {
-  // Rehydrate last 20 turns from persistent memory on first mount
+  // Hydrate last 20 turns from persistent memory
   const [messages, setMessages] = useState<Message[]>(() => {
-    const mem = getMemory().slice(-20);
+    const mem = getSessionTurns(20);
     return mem.map((m, i) => ({
       id: `mem_${i}_${m.ts}`,
       role: m.role,
@@ -55,19 +74,24 @@ export default function Assistant({
   const [input, setInput] = useState('');
   const [interimInput, setInterimInput] = useState('');
   const [loading, setLoading] = useState(false);
-  const [activeAgent, setActiveAgent] = useState<Agent | null>(initialAgent);
+  const [activeAgent, setActiveAgent] = useState<AgentId | null>(legacyToNewId(initialAgent));
+  const [autoRoute, setAutoRoute] = useState<boolean>(true);
   const [showAgents, setShowAgents] = useState(false);
   const abortRef = useRef<AbortController | null>(null);
   const bottomRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLTextAreaElement>(null);
+  const lastUserTsRef = useRef<number>(0);
 
   useEffect(() => {
-    setActiveAgent(initialAgent);
-    if (initialAgent) {
+    const id = legacyToNewId(initialAgent);
+    setActiveAgent(id);
+    if (id) {
+      const a = AGENTS[id];
       setMessages([{
-        id: 'welcome',
+        id: `welcome_${id}`,
         role: 'assistant',
-        content: `${initialAgent.name} activated. What do you need?`,
+        agent: id,
+        content: `${a.name} active. ${a.role}. What do you need?`,
       }]);
     }
   }, [initialAgent]);
@@ -76,70 +100,193 @@ export default function Assistant({
     bottomRef.current?.scrollIntoView({ behavior: 'smooth' });
   }, [messages]);
 
-  const getSystemPrompt = useCallback(() => {
-    let base = kingSystemPrompt;
-    const profile = getProfile();
-    if (profile.notes.length) {
-      base += `\n\n---\n\nLong-term context (always remember):\n- ${profile.notes.join('\n- ')}`;
-    }
-    const behaviorContext = getAIContext();
-    if (behaviorContext) {
-      base += `\n\n---\n\nBehavior signal (use to adapt tone):\n${behaviorContext}`;
-    }
-    if (activeAgent) {
-      base += `\n\n---\n\nCurrent role: ${activeAgent.prompt}`;
-    }
-    return base;
-  }, [activeAgent]);
+  const currentAgent: AgentDef = useMemo(
+    () => (activeAgent ? AGENTS[activeAgent] : AGENTS.research),
+    [activeAgent],
+  );
 
+  // ── Build the full system prompt for a given agent ──
+  const buildSystem = useCallback((agentId: AgentId, chainInjection?: string) => {
+    const a = AGENTS[agentId];
+    const userContext = buildAgentContext(agentId);
+
+    // Pull any handoffs queued for this agent
+    const handoffs = getHandoffsFor(agentId, 5);
+    let handoffBlock = '';
+    if (handoffs.length) {
+      handoffBlock = '\n\n# INBOX FROM TEAMMATES\n' +
+        handoffs.map(h => `- from ${h.from}: ${h.note}`).join('\n');
+      // Mark them consumed so we don't re-inject next turn
+      markConsumed(handoffs.map(h => h.id));
+    }
+
+    let prompt = `${a.systemPrompt}\n\n${userContext}${handoffBlock}`;
+    if (chainInjection) prompt += `\n\n${chainInjection}`;
+    return prompt;
+  }, []);
+
+  // ── Run a single agent turn and stream response ──
+  // Returns the final text.
+  const runAgentTurn = useCallback(
+    async (
+      agentId: AgentId,
+      userText: string,
+      chainInjection: string | undefined,
+      chainBadge?: { planName: string; step: number; total: number },
+    ): Promise<string> => {
+      const aiId = `a_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`;
+      const aiMsg: Message = {
+        id: aiId, role: 'assistant', content: '',
+        streaming: true, agent: agentId, chainStep: chainBadge,
+      };
+      setMessages(prev => [...prev, aiMsg]);
+
+      const history: ChatMessage[] = [
+        { role: 'system', content: buildSystem(agentId, chainInjection) },
+        ...messages
+          .filter(m => !m.streaming && m.content)
+          .slice(-10)
+          .map(m => ({ role: m.role as 'user' | 'assistant', content: m.content })),
+        { role: 'user', content: userText },
+      ];
+
+      abortRef.current = new AbortController();
+
+      return new Promise<string>((resolve) => {
+        let finalText = '';
+        streamChat(
+          history,
+          (chunk) => {
+            finalText += chunk;
+            setMessages(prev => prev.map(m =>
+              m.id === aiId ? { ...m, content: m.content + chunk } : m
+            ));
+          },
+          async () => {
+            // Evaluate quality
+            const evalOut = evaluateResponse(finalText, agentId);
+            recordAsk(agentId, evalOut.score);
+
+            // Retry once if score too low
+            if (evalOut.score < 0.55 && evalOut.retryHint && finalText.length > 20) {
+              setMessages(prev => prev.map(m =>
+                m.id === aiId
+                  ? { ...m, content: '', streaming: true }
+                  : m
+              ));
+              // Single-shot retry (non-stream) with the hint appended
+              try {
+                const retryHistory: ChatMessage[] = [
+                  { role: 'system', content: buildSystem(agentId, chainInjection) + `\n\n# RETRY INSTRUCTION\nYour previous draft was too weak. ${evalOut.retryHint}` },
+                  { role: 'user', content: userText },
+                ];
+                const retry = await singleChat(retryHistory);
+                if (retry && retry.trim().length > 20) {
+                  finalText = retry;
+                  setMessages(prev => prev.map(m =>
+                    m.id === aiId ? { ...m, content: retry, streaming: false, evalScore: evaluateResponse(retry, agentId).score } : m
+                  ));
+                } else {
+                  setMessages(prev => prev.map(m =>
+                    m.id === aiId ? { ...m, streaming: false, evalScore: evalOut.score } : m
+                  ));
+                }
+              } catch {
+                setMessages(prev => prev.map(m =>
+                  m.id === aiId ? { ...m, streaming: false, evalScore: evalOut.score } : m
+                ));
+              }
+            } else {
+              setMessages(prev => prev.map(m =>
+                m.id === aiId ? { ...m, streaming: false, evalScore: evalOut.score } : m
+              ));
+            }
+
+            // Parse handoffs and persist them
+            const handoffs = parseHandoffs(agentId, finalText);
+            handoffs.forEach(h => addHandoff({ from: h.from, to: h.to, note: h.note }));
+
+            // Clean text for memory (strip the [→agent] tags)
+            const cleanText = stripHandoffs(finalText);
+
+            // Extract insights from high-signal single-agent responses
+            if (!chainBadge && evalOut.score >= 0.7 && cleanText.length > 60) {
+              const firstLine = cleanText.split('\n')[0].trim();
+              if (firstLine.length < 180 && firstLine.length > 40) {
+                addInsight(agentId, firstLine);
+              }
+            }
+
+            appendMemory({ role: 'assistant', content: cleanText, ts: Date.now() });
+
+            // Update the displayed content to the stripped version
+            setMessages(prev => prev.map(m =>
+              m.id === aiId ? { ...m, content: cleanText } : m
+            ));
+
+            resolve(cleanText);
+          },
+          (err) => {
+            setMessages(prev => prev.map(m =>
+              m.id === aiId ? { ...m, content: `Error: ${err}`, streaming: false } : m
+            ));
+            resolve('');
+          },
+          abortRef.current!.signal,
+        );
+      });
+    },
+    [messages, buildSystem],
+  );
+
+  // ── Send a user message ──
   const sendMessage = useCallback(async (text: string) => {
     if (!text.trim() || loading) return;
 
-    const userMsg: Message = { id: `u_${Date.now()}`, role: 'user', content: text.trim() };
-    const aiId = `a_${Date.now()}`;
-    const aiMsg: Message = { id: aiId, role: 'assistant', content: '', streaming: true };
+    const userText = text.trim();
+    const now = Date.now();
 
-    setMessages(prev => [...prev, userMsg, aiMsg]);
-    appendMemory({ role: 'user', content: text.trim(), ts: Date.now() });
+    // Engagement: if user sent another message within 90s of the last, count as follow-up
+    if (lastUserTsRef.current && now - lastUserTsRef.current < 90_000) {
+      const lastAgent = [...messages].reverse().find(m => m.role === 'assistant')?.agent;
+      if (lastAgent) recordFollowUp(lastAgent);
+    }
+    lastUserTsRef.current = now;
+
+    const userMsg: Message = { id: `u_${now}`, role: 'user', content: userText };
+    setMessages(prev => [...prev, userMsg]);
+    appendMemory({ role: 'user', content: userText, ts: now });
     setInput('');
     setInterimInput('');
     setLoading(true);
 
-    const history: ChatMessage[] = [
-      { role: 'system', content: getSystemPrompt() },
-      ...messages.map(m => ({ role: m.role as 'user' | 'assistant', content: m.content })),
-      { role: 'user', content: text.trim() },
-    ];
+    try {
+      // Detect if this is a multi-step chain
+      const chain: ChainPlan | null = matchChain(userText);
 
-    abortRef.current = new AbortController();
-
-    await streamChat(
-      history,
-      (chunk) => {
-        setMessages(prev => prev.map(m =>
-          m.id === aiId ? { ...m, content: m.content + chunk } : m
-        ));
-      },
-      () => {
-        setMessages(prev => {
-          const done = prev.map(m => m.id === aiId ? { ...m, streaming: false } : m);
-          const final = done.find(m => m.id === aiId);
-          if (final && final.content) {
-            appendMemory({ role: 'assistant', content: final.content, ts: Date.now() });
-          }
-          return done;
-        });
-        setLoading(false);
-      },
-      (err) => {
-        setMessages(prev => prev.map(m =>
-          m.id === aiId ? { ...m, content: `Error: ${err}`, streaming: false } : m
-        ));
-        setLoading(false);
-      },
-      abortRef.current.signal,
-    );
-  }, [loading, messages, getSystemPrompt]);
+      if (chain) {
+        // Run each step sequentially, feeding previous outputs in
+        const priorOutputs: { agent: AgentId; text: string }[] = [];
+        for (let i = 0; i < chain.steps.length; i++) {
+          const step = chain.steps[i];
+          const injection = buildChainStepPrompt(chain, i, userText, priorOutputs);
+          const out = await runAgentTurn(
+            step.agent,
+            userText,
+            injection,
+            { planName: chain.name, step: i + 1, total: chain.steps.length },
+          );
+          if (out) priorOutputs.push({ agent: step.agent, text: out });
+        }
+      } else {
+        // Single-agent turn. Use activeAgent if set, else auto-route.
+        const target: AgentId = activeAgent ?? (autoRoute ? routeAgent(userText) : 'research');
+        await runAgentTurn(target, userText, undefined);
+      }
+    } finally {
+      setLoading(false);
+    }
+  }, [loading, messages, activeAgent, autoRoute, runAgentTurn]);
 
   const handleKeyDown = (e: React.KeyboardEvent) => {
     if (e.key === 'Enter' && !e.shiftKey) {
@@ -154,11 +301,11 @@ export default function Assistant({
     onAgentClear();
     abortRef.current?.abort();
     setLoading(false);
-    // Keep long-term memory; just clear the visible thread.
   };
 
-  const agentAccent = activeAgent ? AGENT_COLORS[activeAgent.id] ?? 'var(--amethyst)' : 'var(--amethyst)';
+  const agentAccent = currentAgent.accent;
 
+  // ── UI ─────────────────────────────────────────────────────
   return (
     <motion.div
       initial={{ opacity: 0 }}
@@ -168,14 +315,14 @@ export default function Assistant({
     >
       <div className="container pt-8">
         <PageHeader
-          stamp="ASSISTANT · AI CHIEF OF STAFF"
-          title={activeAgent ? activeAgent.name : 'Oracle.'}
-          subtitle={activeAgent ? activeAgent.description : 'Think together. Decide faster. Execute sharper.'}
+          stamp="ASSISTANT · AGENT TEAM"
+          title={activeAgent ? AGENTS[activeAgent].name : 'Oracle.'}
+          subtitle={activeAgent ? AGENTS[activeAgent].role : 'Seven agents. One operator. Ask.'}
           accent={agentAccent}
           right={
             <div className="flex items-center gap-2">
               <button
-                onClick={() => setShowAgents(!showAgents)}
+                onClick={() => setShowAgents(v => !v)}
                 className="px-3 py-1.5 rounded-full transition-all duration-300"
                 style={{
                   fontFamily: 'var(--font-mono)',
@@ -183,11 +330,10 @@ export default function Assistant({
                   fontWeight: 600,
                   letterSpacing: '0.1em',
                   background: showAgents
-                    ? 'linear-gradient(180deg, #C9B8FF 0%, #A68FFF 100%)'
+                    ? `linear-gradient(180deg, ${agentAccent} 0%, color-mix(in srgb, ${agentAccent} 70%, #000) 100%)`
                     : 'rgba(255,255,255,0.04)',
                   color: showAgents ? '#0A0A0F' : 'rgba(245,244,248,0.55)',
                   border: showAgents ? 'none' : '1px solid rgba(255,255,255,0.08)',
-                  boxShadow: showAgents ? '0 4px 12px rgba(184,164,255,0.25)' : 'none',
                 }}
               >
                 AGENTS
@@ -195,8 +341,12 @@ export default function Assistant({
               {messages.length > 0 && (
                 <button
                   onClick={clearChat}
-                  className="px-3 py-1.5 rounded-full font-mono-stamp text-white/40 hover:text-white/70 transition-colors"
+                  className="px-3 py-1.5 rounded-full text-white/40 hover:text-white/70 transition-colors"
                   style={{
+                    fontFamily: 'var(--font-mono)',
+                    fontSize: '0.68rem',
+                    fontWeight: 600,
+                    letterSpacing: '0.1em',
                     background: 'rgba(255,255,255,0.03)',
                     border: '1px solid rgba(255,255,255,0.07)',
                   }}
@@ -208,36 +358,47 @@ export default function Assistant({
           }
         />
 
-        {/* Active agent badge */}
-        {activeAgent && (
-          <motion.div
-            initial={{ opacity: 0, y: -4 }}
-            animate={{ opacity: 1, y: 0 }}
-            className="flex items-center gap-2 py-1.5 px-3 rounded-full mb-5 w-fit"
-            style={{
-              background: `linear-gradient(135deg, ${agentAccent}22 0%, ${agentAccent}08 100%)`,
-              border: `1px solid ${agentAccent}44`,
-            }}
-          >
-            <span className="pulse-dot" style={{ background: agentAccent }} />
-            <span
-              className="text-xs"
+        {/* Active agent badge + auto-route toggle */}
+        <div className="flex flex-wrap items-center gap-2 mb-5">
+          {activeAgent ? (
+            <motion.div
+              initial={{ opacity: 0, y: -4 }}
+              animate={{ opacity: 1, y: 0 }}
+              className="flex items-center gap-2 py-1.5 px-3 rounded-full"
               style={{
-                fontFamily: 'var(--font-ui)',
-                fontWeight: 500,
-                color: agentAccent,
+                background: `linear-gradient(135deg, color-mix(in srgb, ${agentAccent} 18%, transparent) 0%, color-mix(in srgb, ${agentAccent} 5%, transparent) 100%)`,
+                border: `1px solid color-mix(in srgb, ${agentAccent} 35%, transparent)`,
               }}
             >
-              {activeAgent.name} active
-            </span>
+              <span className="pulse-dot" style={{ background: agentAccent }} />
+              <span
+                className="text-xs"
+                style={{ fontFamily: 'var(--font-ui)', fontWeight: 500, color: agentAccent }}
+              >
+                {AGENTS[activeAgent].name} active
+              </span>
+              <button
+                onClick={() => { setActiveAgent(null); onAgentClear(); }}
+                className="text-white/40 hover:text-white/70 transition-colors text-xs ml-1"
+              >×</button>
+            </motion.div>
+          ) : (
             <button
-              onClick={() => { setActiveAgent(null); onAgentClear(); }}
-              className="text-white/40 hover:text-white/70 transition-colors text-xs ml-1"
+              onClick={() => setAutoRoute(v => !v)}
+              className="flex items-center gap-2 py-1.5 px-3 rounded-full transition-all"
+              style={{
+                background: autoRoute ? 'rgba(184,164,255,0.12)' : 'rgba(255,255,255,0.03)',
+                border: `1px solid ${autoRoute ? 'rgba(184,164,255,0.3)' : 'rgba(255,255,255,0.07)'}`,
+                color: autoRoute ? 'var(--amethyst)' : 'rgba(245,244,248,0.5)',
+              }}
             >
-              ×
+              <span className="w-1.5 h-1.5 rounded-full" style={{ background: 'currentColor' }} />
+              <span className="text-[11px]" style={{ fontFamily: 'var(--font-ui)', fontWeight: 500 }}>
+                Auto-route: {autoRoute ? 'on' : 'off'}
+              </span>
             </button>
-          </motion.div>
-        )}
+          )}
+        </div>
 
         {/* Agent selector dropdown */}
         <AnimatePresence>
@@ -250,43 +411,44 @@ export default function Assistant({
               className="card-elevated p-2 mb-5"
             >
               <div className="grid grid-cols-1 gap-1">
-                {agents.map(agent => {
-                  const color = AGENT_COLORS[agent.id] ?? 'var(--amethyst)';
-                  const isActive = activeAgent?.id === agent.id;
+                {AGENT_ORDER.map(id => {
+                  const agent = AGENTS[id];
+                  const isActive = activeAgent === id;
                   return (
                     <button
-                      key={agent.id}
+                      key={id}
                       onClick={() => {
-                        setActiveAgent(agent);
+                        setActiveAgent(id);
                         setShowAgents(false);
                         setMessages([{
-                          id: `welcome_${agent.id}`,
+                          id: `welcome_${id}`,
                           role: 'assistant',
-                          content: `${agent.name} activated. ${agent.description}. What do you need?`,
+                          agent: id,
+                          content: `${agent.name} active. ${agent.role}. What do you need?`,
                         }]);
                       }}
                       className="flex items-center gap-3 p-2.5 rounded-xl text-left transition-all duration-200 hover:scale-[1.005]"
                       style={{
-                        background: isActive ? `${color}15` : 'transparent',
-                        border: isActive ? `1px solid ${color}40` : '1px solid transparent',
+                        background: isActive ? `color-mix(in srgb, ${agent.accent} 13%, transparent)` : 'transparent',
+                        border: isActive ? `1px solid color-mix(in srgb, ${agent.accent} 32%, transparent)` : '1px solid transparent',
                       }}
                     >
                       <div
-                        className="w-2 h-2 rounded-full flex-shrink-0"
-                        style={{ background: color, boxShadow: `0 0 8px ${color}` }}
-                      />
+                        className="w-7 h-7 rounded-lg flex items-center justify-center flex-shrink-0 text-[11px] font-mono font-semibold"
+                        style={{
+                          background: `color-mix(in srgb, ${agent.accent} 15%, transparent)`,
+                          color: agent.accent,
+                          boxShadow: `0 0 12px color-mix(in srgb, ${agent.accent} 25%, transparent)`,
+                        }}
+                      >
+                        {agent.glyph}
+                      </div>
                       <div className="min-w-0 flex-1">
-                        <p
-                          className="text-[#F5F4F8] text-sm"
-                          style={{ fontFamily: 'var(--font-ui)', fontWeight: 500 }}
-                        >
+                        <p className="text-[#F5F4F8] text-sm font-medium" style={{ fontFamily: 'var(--font-ui)' }}>
                           {agent.name}
                         </p>
-                        <p
-                          className="text-white/40 text-xs truncate"
-                          style={{ fontFamily: 'var(--font-ui)' }}
-                        >
-                          {agent.description}
+                        <p className="text-white/40 text-xs truncate" style={{ fontFamily: 'var(--font-ui)' }}>
+                          {agent.role}
                         </p>
                       </div>
                     </button>
@@ -313,115 +475,133 @@ export default function Assistant({
                 letterSpacing: '-0.02em',
               }}
             >
-              Your chief of staff is ready.
+              Ask anything — your team is listening.
             </p>
             <div className="space-y-2">
-              {QUICK_PROMPTS.map((prompt, i) => (
-                <motion.button
-                  key={i}
-                  initial={{ opacity: 0, y: 6 }}
-                  animate={{ opacity: 1, y: 0 }}
-                  transition={{ delay: i * 0.05, duration: 0.35, ease: EASE }}
-                  onClick={() => sendMessage(prompt.text)}
-                  className="w-full text-left p-3.5 rounded-2xl transition-all duration-300 hover:scale-[1.005] group flex items-center gap-3"
-                  style={{
-                    background: 'rgba(255,255,255,0.03)',
-                    border: '1px solid rgba(255,255,255,0.07)',
-                  }}
-                >
-                  <span
-                    className="w-7 h-7 rounded-lg flex items-center justify-center flex-shrink-0 text-sm"
+              {QUICK_PROMPTS.map((prompt, i) => {
+                const a = AGENTS[prompt.agent];
+                return (
+                  <motion.button
+                    key={i}
+                    initial={{ opacity: 0, y: 6 }}
+                    animate={{ opacity: 1, y: 0 }}
+                    transition={{ delay: i * 0.05, duration: 0.35, ease: EASE }}
+                    onClick={() => sendMessage(prompt.text)}
+                    className="w-full text-left p-3.5 rounded-2xl transition-all duration-300 hover:scale-[1.005] group flex items-center gap-3"
                     style={{
-                      background: `${prompt.accent}15`,
-                      border: `1px solid ${prompt.accent}30`,
-                      color: prompt.accent,
+                      background: 'rgba(255,255,255,0.03)',
+                      border: '1px solid rgba(255,255,255,0.07)',
                     }}
                   >
-                    {prompt.icon}
-                  </span>
-                  <span
-                    className="text-white/65 text-sm flex-1"
-                    style={{ fontFamily: 'var(--font-ui)', fontWeight: 400 }}
-                  >
-                    {prompt.text}
-                  </span>
-                  <svg
-                    width="12" height="12" viewBox="0 0 12 12" fill="none"
-                    className="flex-shrink-0 transition-transform duration-300 group-hover:translate-x-0.5"
-                    style={{ color: 'rgba(245,244,248,0.25)' }}
-                  >
-                    <path d="M4 2L8 6L4 10" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"/>
-                  </svg>
-                </motion.button>
-              ))}
+                    <span
+                      className="w-7 h-7 rounded-lg flex items-center justify-center flex-shrink-0 text-[11px] font-mono font-semibold"
+                      style={{
+                        background: `color-mix(in srgb, ${a.accent} 15%, transparent)`,
+                        border: `1px solid color-mix(in srgb, ${a.accent} 30%, transparent)`,
+                        color: a.accent,
+                      }}
+                    >
+                      {a.glyph}
+                    </span>
+                    <span
+                      className="text-white/70 text-sm flex-1"
+                      style={{ fontFamily: 'var(--font-ui)' }}
+                    >
+                      {prompt.text}
+                    </span>
+                    <svg
+                      width="12" height="12" viewBox="0 0 12 12" fill="none"
+                      className="flex-shrink-0 transition-transform duration-300 group-hover:translate-x-0.5"
+                      style={{ color: 'rgba(245,244,248,0.25)' }}
+                    >
+                      <path d="M4 2L8 6L4 10" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"/>
+                    </svg>
+                  </motion.button>
+                );
+              })}
             </div>
           </div>
         ) : (
           <div className="space-y-3 py-2">
             <AnimatePresence initial={false}>
-              {messages.map(msg => (
-                <motion.div
-                  key={msg.id}
-                  initial={{ opacity: 0, y: 8 }}
-                  animate={{ opacity: 1, y: 0 }}
-                  transition={{ duration: 0.3, ease: EASE }}
-                  className={`flex ${msg.role === 'user' ? 'justify-end' : 'justify-start'}`}
-                >
-                  <div
-                    className={`max-w-[86%] px-4 py-3 rounded-2xl ${msg.role === 'user' ? '' : ''}`}
-                    style={msg.role === 'user' ? {
-                      background: 'linear-gradient(180deg, rgba(184,164,255,0.14) 0%, rgba(122,92,232,0.08) 100%)',
-                      border: '1px solid rgba(184,164,255,0.22)',
-                      borderBottomRightRadius: '6px',
-                    } : {
-                      background: 'rgba(255,255,255,0.04)',
-                      border: '1px solid rgba(255,255,255,0.08)',
-                      borderBottomLeftRadius: '6px',
-                    }}
+              {messages.map(msg => {
+                const msgAgent = msg.agent ? AGENTS[msg.agent] : currentAgent;
+                const msgAccent = msg.agent ? AGENTS[msg.agent].accent : agentAccent;
+                return (
+                  <motion.div
+                    key={msg.id}
+                    initial={{ opacity: 0, y: 8 }}
+                    animate={{ opacity: 1, y: 0 }}
+                    transition={{ duration: 0.3, ease: EASE }}
+                    className={`flex ${msg.role === 'user' ? 'justify-end' : 'justify-start'}`}
                   >
-                    {msg.role === 'assistant' && (
-                      <div className="flex items-center gap-1.5 mb-2">
-                        <span
-                          className="pulse-dot"
-                          style={{
-                            background: agentAccent,
-                            opacity: msg.streaming ? 1 : 0.6,
-                          }}
-                        />
-                        <span
-                          className="font-mono-stamp"
-                          style={{ color: agentAccent, fontWeight: 600 }}
-                        >
-                          {activeAgent ? activeAgent.name.toUpperCase() : 'MINDSHIFT'}
-                        </span>
-                        {msg.streaming && (
-                          <span className="inline-flex gap-0.5 ml-1">
-                            {[0,1,2].map(i => (
-                              <motion.span
-                                key={i}
-                                className="w-1 h-1 rounded-full"
-                                style={{ background: agentAccent }}
-                                animate={{ opacity: [0.3, 1, 0.3] }}
-                                transition={{ duration: 1.2, repeat: Infinity, delay: i * 0.2 }}
-                              />
-                            ))}
-                          </span>
-                        )}
-                      </div>
-                    )}
-                    <p
-                      className="text-sm leading-relaxed whitespace-pre-wrap"
-                      style={{
-                        fontFamily: 'var(--font-ui)',
-                        lineHeight: 1.65,
-                        color: msg.role === 'user' ? 'rgba(245,244,248,0.95)' : 'rgba(245,244,248,0.88)',
+                    <div
+                      className="max-w-[88%] px-4 py-3 rounded-2xl"
+                      style={msg.role === 'user' ? {
+                        background: 'linear-gradient(180deg, rgba(184,164,255,0.14) 0%, rgba(122,92,232,0.08) 100%)',
+                        border: '1px solid rgba(184,164,255,0.22)',
+                        borderBottomRightRadius: '6px',
+                      } : {
+                        background: 'rgba(255,255,255,0.04)',
+                        border: `1px solid color-mix(in srgb, ${msgAccent} 12%, rgba(255,255,255,0.08))`,
+                        borderBottomLeftRadius: '6px',
                       }}
                     >
-                      {msg.content || (msg.streaming ? '' : '...')}
-                    </p>
-                  </div>
-                </motion.div>
-              ))}
+                      {msg.role === 'assistant' && (
+                        <div className="flex items-center gap-1.5 mb-2 flex-wrap">
+                          <span
+                            className="pulse-dot"
+                            style={{ background: msgAccent, opacity: msg.streaming ? 1 : 0.6 }}
+                          />
+                          <span
+                            style={{
+                              color: msgAccent, fontWeight: 600, fontFamily: 'var(--font-mono)',
+                              fontSize: '0.66rem', letterSpacing: '0.12em',
+                            }}
+                          >
+                            {msgAgent.name.toUpperCase()}
+                          </span>
+                          {msg.chainStep && (
+                            <span
+                              className="px-1.5 py-0.5 rounded"
+                              style={{
+                                fontFamily: 'var(--font-mono)', fontSize: '0.58rem',
+                                letterSpacing: '0.1em', color: 'rgba(245,244,248,0.55)',
+                                background: 'rgba(255,255,255,0.05)',
+                              }}
+                            >
+                              {msg.chainStep.planName.toUpperCase()} · {msg.chainStep.step}/{msg.chainStep.total}
+                            </span>
+                          )}
+                          {msg.streaming && (
+                            <span className="inline-flex gap-0.5 ml-1">
+                              {[0,1,2].map(i => (
+                                <motion.span
+                                  key={i}
+                                  className="w-1 h-1 rounded-full"
+                                  style={{ background: msgAccent }}
+                                  animate={{ opacity: [0.3, 1, 0.3] }}
+                                  transition={{ duration: 1.2, repeat: Infinity, delay: i * 0.2 }}
+                                />
+                              ))}
+                            </span>
+                          )}
+                        </div>
+                      )}
+                      <p
+                        className="text-sm leading-relaxed whitespace-pre-wrap"
+                        style={{
+                          fontFamily: 'var(--font-ui)',
+                          lineHeight: 1.65,
+                          color: msg.role === 'user' ? 'rgba(245,244,248,0.95)' : 'rgba(245,244,248,0.88)',
+                        }}
+                      >
+                        {msg.content || (msg.streaming ? '' : '…')}
+                      </p>
+                    </div>
+                  </motion.div>
+                );
+              })}
             </AnimatePresence>
             <div ref={bottomRef} />
           </div>
@@ -454,7 +634,7 @@ export default function Assistant({
                 e.target.style.height = Math.min(e.target.scrollHeight, 120) + 'px';
               }}
               onKeyDown={handleKeyDown}
-              placeholder={activeAgent ? `Ask ${activeAgent.name}…` : 'Ask anything…'}
+              placeholder={activeAgent ? `Ask ${AGENTS[activeAgent].name}…` : 'Ask anything — I\'ll route you…'}
               rows={1}
               className="flex-1 bg-transparent outline-none resize-none placeholder:text-white/25 py-1.5 px-2"
               style={{
@@ -478,9 +658,11 @@ export default function Assistant({
               className="w-10 h-10 rounded-xl flex items-center justify-center flex-shrink-0 transition-all duration-300 disabled:opacity-30"
               style={{
                 background: input.trim() && !loading
-                  ? `linear-gradient(135deg, ${agentAccent} 0%, ${agentAccent}CC 100%)`
+                  ? `linear-gradient(135deg, ${agentAccent} 0%, color-mix(in srgb, ${agentAccent} 70%, #000) 100%)`
                   : 'rgba(255,255,255,0.06)',
-                boxShadow: input.trim() && !loading ? `0 4px 16px ${agentAccent}40` : 'none',
+                boxShadow: input.trim() && !loading
+                  ? `0 4px 16px color-mix(in srgb, ${agentAccent} 40%, transparent)`
+                  : 'none',
               }}
             >
               {loading ? (

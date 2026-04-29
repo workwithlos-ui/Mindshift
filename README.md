@@ -32,10 +32,31 @@ A premium, mobile-first personal execution app for King (Los Silva · [@loshustl
 
 ### Phase 3 features
 
-- **Onboarding wizard** — five-step, full-screen flow (name, role, focus area: mind/body/business/all, goals). Personalizes the greeting, AI tone, and first-week content.
-- **Personalization Engine** — silently tracks screen views, affirmation swipes, timer starts, journal saves. Adapts the Today briefing (swaps greeting, surfaces nudges when patterns break) and injects behavior context into every AI call.
-- **Shareable Daily Scorecard** — branded 4:5 card with streak, daily stats (focus minutes, actions, content), affirmation of the day. Exports to PNG via `html-to-image` and invokes the native iOS share sheet. Designed to be screenshot-worthy.
-- **Roadmap — Pass B (awaiting Supabase keys):** email-magic-link auth, multi-user schema, public leaderboard, friend streaks, shareable profile pages.
+- **Onboarding wizard** — name, role, focus area, goals. Personalizes greeting, AI tone, and first-week content.
+- **Personalization Engine** — tracks screen views, affirmation swipes, timer starts, journal saves. Adapts the Today briefing and injects behavior context into every AI call.
+- **Shareable Daily Scorecard** — branded 4:5 card with streak, daily stats, affirmation of the day. PNG export via `html-to-image` + native iOS share sheet.
+
+### Phase 4 — Agent Intelligence (current)
+
+Seven specialized agents, each with a deep system prompt and dedicated context block:
+
+| Agent | Role | Accent |
+|---|---|---|
+| Research | Deep-dive analyst | Amethyst |
+| Build | Systems architect | Teal |
+| Marketing | Content strategist | Peach |
+| Growth | Revenue strategist | Mint |
+| Analytics | Data analyst | Ice |
+| Mindset | Identity & reframe | Citrine |
+| Fitness | Body operator | Coral |
+
+- **Three-tier memory** — session (last 20 turns) + persistent (explicit facts) + behavioral (patterns from user data). Assembled per-agent via `lib/memory.ts`.
+- **Cross-agent handoffs** — agents emit `[→agent] note` tags; the assistant parses and queues them for the target agent's next turn.
+- **Proactive Team Brief** — deterministic rule engine (`lib/insights.ts`) surfaces up to 3 dismissible insight cards on Today (revenue trends, streak risks, content velocity, recovery flags).
+- **Prompt chaining** — phrases like "create a content plan" fan out across Research → Marketing → Growth → Analytics, each step feeding the next (`lib/chain.ts`).
+- **Evaluation loop** — `lib/evaluator.ts` scores each response for hedging, generic advice, missing specifics, refusals. Low-scoring responses trigger a one-shot retry with a sharpening hint.
+- **Auto-routing** — `routeAgent()` regex-routes user input to the best-fit agent when no agent is selected.
+- **Engagement tracking** — per-agent ask / follow-up counters stored locally for future quality tuning.
 
 ---
 
