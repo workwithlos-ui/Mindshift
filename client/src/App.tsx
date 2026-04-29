@@ -24,6 +24,11 @@ import Assistant from '@/pages/Assistant';
 import { type Agent } from '@/lib/content';
 import { hydrateFromRemote, hasOnboarded, saveUserProfile, logBehavior, type BehaviorEvent } from '@/lib/storage';
 import { tick } from '@/lib/notifications';
+import { AuthScreen } from '@/components/AuthScreen';
+import { onAuthChange, supabaseEnabled } from '@/lib/supabase';
+
+// Skip-auth flag: user explicitly chose to use the app without an account.
+const SKIP_AUTH_KEY = 'ms_skip_auth';
 
 function App() {
   const [tab, setTab] = useState<NavTab>('today');
@@ -32,8 +37,24 @@ function App() {
   const [scorecardOpen, setScorecardOpen] = useState(false);
   // Check localStorage immediately — if already onboarded, skip the flow
   const [onboarded, setOnboarded] = useState<boolean>(() => hasOnboarded());
+  // Auth state: 'loading' until first onAuthChange fires
+  const [authReady, setAuthReady] = useState<boolean>(!supabaseEnabled);
+  const [signedIn, setSignedIn] = useState<boolean>(false);
+  const [skipAuth, setSkipAuth] = useState<boolean>(() => localStorage.getItem(SKIP_AUTH_KEY) === '1');
 
-  // One-time remote pull
+  // Subscribe to Supabase auth state
+  useEffect(() => {
+    if (!supabaseEnabled) { setAuthReady(true); return; }
+    const off = onAuthChange((u) => {
+      setSignedIn(!!u);
+      setAuthReady(true);
+      // On fresh sign-in, hydrate cloud → local
+      if (u) { void hydrateFromRemote(); }
+    });
+    return off;
+  }, []);
+
+  // One-time remote pull (no-op if not signed in)
   useEffect(() => { void hydrateFromRemote(); }, []);
 
   // Notification scheduler
@@ -81,6 +102,21 @@ function App() {
     setOnboarded(true);
   }
 
+  function handleAuthed() {
+    setSignedIn(true);
+    // If they sign in we no longer want the skip flag set
+    localStorage.removeItem(SKIP_AUTH_KEY);
+    setSkipAuth(false);
+  }
+
+  function handleSkipAuth() {
+    localStorage.setItem(SKIP_AUTH_KEY, '1');
+    setSkipAuth(true);
+  }
+
+  // Show auth gate if backend enabled, user not signed in, and they haven't chosen to skip
+  const showAuth = supabaseEnabled && authReady && !signedIn && !skipAuth;
+
   return (
     <ErrorBoundary>
       <ThemeProvider defaultTheme="dark">
@@ -95,8 +131,20 @@ function App() {
               position: 'relative',
             }}
           >
-            {/* Settings + Scorecard buttons — only show when onboarded */}
-            {onboarded && (
+            {/* Loading splash before auth state resolved */}
+            {!authReady && (
+              <div style={{minHeight:'100vh',display:'flex',alignItems:'center',justifyContent:'center'}}>
+                <div className="h-8 w-8 rounded-full border-2 border-white/10 border-t-white/40 animate-spin" />
+              </div>
+            )}
+
+            {/* Auth gate */}
+            {authReady && showAuth && (
+              <AuthScreen onAuthed={handleAuthed} onSkip={handleSkipAuth} />
+            )}
+
+            {/* Settings + Scorecard buttons — only show when onboarded AND past auth */}
+            {authReady && !showAuth && onboarded && (
               <>
                 <button
                   onClick={() => setSettingsOpen(true)}
@@ -140,7 +188,8 @@ function App() {
               </>
             )}
 
-            {/* ── Page content ───────────────────────────────── */}
+             {/* ── Page content (only when past auth gate) ────────── */}
+            {authReady && !showAuth && (
             <AnimatePresence mode="wait">
               {!onboarded && (
                 <motion.div
@@ -166,9 +215,12 @@ function App() {
                 />
               )}
             </AnimatePresence>
+            )}
 
-            {/* ── Bottom nav — ALWAYS rendered, z-50 ─────────── */}
-            <BottomNav active={onboarded ? tab : tab} onChange={handleTabChange} />
+            {/* ── Bottom nav — only when past auth gate ────────── */}
+            {authReady && !showAuth && (
+              <BottomNav active={onboarded ? tab : tab} onChange={handleTabChange} />
+            )}
 
             <SettingsSheet open={settingsOpen} onClose={() => setSettingsOpen(false)} />
             <AnimatePresence>

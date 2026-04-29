@@ -9,8 +9,9 @@ import {
   isInstalledPWA, isIos,
   type NotifSettings,
 } from '@/lib/notifications';
-import { getProfile, setProfileNotes, clearMemory } from '@/lib/storage';
-import { supabaseEnabled } from '@/lib/supabase';
+import { getProfile, setProfileNotes, clearMemory, pushAllToRemote } from '@/lib/storage';
+import { supabaseEnabled, getCurrentUser, signOut } from '@/lib/supabase';
+type AuthUser = { email?: string };
 import { Hairline, EASE } from '@/components/ui-shared';
 
 export function SettingsSheet({
@@ -20,13 +21,32 @@ export function SettingsSheet({
   const [settings, setSettings] = useState<NotifSettings>(getSettings());
   const [perm, setPerm] = useState<NotificationPermission>('default');
   const [profileText, setProfileText] = useState('');
+  const [user, setUser] = useState<AuthUser | null>(null);
+  const [syncing, setSyncing] = useState(false);
+  const [syncMsg, setSyncMsg] = useState<string | null>(null);
 
   useEffect(() => {
     if (!open) return;
     setSettings(getSettings());
     setPerm(permission());
     setProfileText(getProfile().notes.join('\n'));
+    if (supabaseEnabled) { void getCurrentUser().then(setUser); }
   }, [open]);
+
+  const handleSync = async () => {
+    setSyncing(true); setSyncMsg(null);
+    try { await pushAllToRemote(); setSyncMsg('Pushed to cloud.'); }
+    catch { setSyncMsg('Sync failed.'); }
+    finally { setSyncing(false); setTimeout(() => setSyncMsg(null), 3000); }
+  };
+
+  const handleSignOut = async () => {
+    if (!confirm('Sign out? Your local data stays on this device.')) return;
+    await signOut();
+    // Clear skip flag so next visit prompts auth again
+    localStorage.removeItem('ms_skip_auth');
+    location.reload();
+  };
 
   const toggleEnabled = async () => {
     let next = { ...settings, enabled: !settings.enabled };
@@ -232,30 +252,86 @@ export function SettingsSheet({
 
                 <Hairline />
 
-                {/* Sync status */}
+                {/* Account / Sync */}
                 <section>
-                  <span className="font-mono-stamp text-white/40">SYNC</span>
+                  <span className="font-mono-stamp text-white/40">ACCOUNT</span>
                   <div
-                    className="mt-3 p-3 rounded-xl flex items-center justify-between"
+                    className="mt-3 p-4 rounded-2xl"
                     style={{
                       background: 'rgba(255,255,255,0.03)',
                       border: '1px solid rgba(255,255,255,0.07)',
                     }}
                   >
-                    <div>
-                      <p className="text-white/80 text-sm" style={{ fontFamily: 'var(--font-ui)', fontWeight: 500 }}>
-                        {supabaseEnabled ? 'Cloud sync active' : 'Local only'}
-                      </p>
-                      <p className="text-white/40 text-xs mt-0.5" style={{ fontFamily: 'var(--font-ui)' }}>
-                        {supabaseEnabled
-                          ? 'Data backed up to Supabase'
-                          : 'Data stays on this device'}
-                      </p>
+                    <div className="flex items-start justify-between gap-3">
+                      <div className="min-w-0 flex-1">
+                        <p className="text-white/85 text-sm truncate" style={{ fontFamily: 'var(--font-ui)', fontWeight: 500 }}>
+                          {user ? user.email : (supabaseEnabled ? 'Not signed in' : 'Local only mode')}
+                        </p>
+                        <p className="text-white/40 text-xs mt-0.5" style={{ fontFamily: 'var(--font-ui)' }}>
+                          {user
+                            ? 'Cloud sync active'
+                            : supabaseEnabled
+                              ? 'Sign in to back up across devices'
+                              : 'Backend not configured'}
+                        </p>
+                      </div>
+                      <span
+                        className="pulse-dot mt-1.5"
+                        style={{ background: user ? 'var(--mint)' : 'rgba(255,255,255,0.35)' }}
+                      />
                     </div>
-                    <span
-                      className="pulse-dot"
-                      style={{ background: supabaseEnabled ? 'var(--mint)' : 'rgba(255,255,255,0.4)' }}
-                    />
+                    {user && (
+                      <div className="flex items-center gap-2 mt-4">
+                        <button
+                          onClick={handleSync}
+                          disabled={syncing}
+                          className="flex-1 px-3 py-2.5 rounded-xl text-xs transition-colors"
+                          style={{
+                            fontFamily: 'var(--font-mono)',
+                            letterSpacing: '0.1em',
+                            color: 'rgba(245,244,248,0.85)',
+                            background: 'rgba(184,164,255,0.10)',
+                            border: '1px solid rgba(184,164,255,0.22)',
+                            opacity: syncing ? 0.6 : 1,
+                          }}
+                        >
+                          {syncing ? 'SYNCING…' : 'PUSH ALL TO CLOUD'}
+                        </button>
+                        <button
+                          onClick={handleSignOut}
+                          className="px-4 py-2.5 rounded-xl text-xs"
+                          style={{
+                            fontFamily: 'var(--font-mono)',
+                            letterSpacing: '0.1em',
+                            color: 'rgba(255,130,130,0.8)',
+                            background: 'rgba(255,130,130,0.08)',
+                            border: '1px solid rgba(255,130,130,0.18)',
+                          }}
+                        >
+                          SIGN OUT
+                        </button>
+                      </div>
+                    )}
+                    {!user && supabaseEnabled && (
+                      <button
+                        onClick={() => { localStorage.removeItem('ms_skip_auth'); location.reload(); }}
+                        className="w-full mt-4 px-3 py-2.5 rounded-xl text-xs transition-colors"
+                        style={{
+                          fontFamily: 'var(--font-mono)',
+                          letterSpacing: '0.1em',
+                          color: 'rgba(245,244,248,0.85)',
+                          background: 'linear-gradient(135deg, rgba(184,164,255,0.18), rgba(140,217,200,0.18))',
+                          border: '1px solid rgba(184,164,255,0.25)',
+                        }}
+                      >
+                        SIGN IN OR CREATE ACCOUNT
+                      </button>
+                    )}
+                    {syncMsg && (
+                      <p className="text-white/55 text-xs mt-3" style={{ fontFamily: 'var(--font-ui)' }}>
+                        {syncMsg}
+                      </p>
+                    )}
                   </div>
                 </section>
               </div>

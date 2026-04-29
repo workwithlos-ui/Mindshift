@@ -2,7 +2,16 @@
 // MINDSHIFT AI — STORAGE LAYER
 // Primary: localStorage. Secondary: Supabase sync (if enabled).
 // ============================================================
-import { supabaseEnabled, syncPush, syncPull } from './supabase';
+import {
+  supabaseEnabled,
+  pushJournal, pullJournal, deleteJournal as cloudDeleteJournal,
+  pushProgressDay, pullProgress,
+  pushFitness, pullFitness,
+  pushChat, pullChat,
+  pushMemory, pullMemory,
+  pushProfile, pullProfile,
+  getCurrentUser,
+} from './supabase';
 
 export interface JournalEntry {
   id: string;
@@ -63,8 +72,58 @@ function get<T>(key: string, fallback: T): T {
 }
 function set<T>(key: string, value: T): void {
   try { localStorage.setItem(key, JSON.stringify(value)); } catch {}
-  // Fire-and-forget sync. Never blocks the UI.
-  if (supabaseEnabled) { void syncPush(key, value); }
+  // Per-key fire-and-forget cloud sync (only if signed in).
+  if (supabaseEnabled) { void cloudSyncKey(key, value); }
+}
+
+// Map a localStorage key change to its appropriate Supabase write.
+async function cloudSyncKey(key: string, value: unknown): Promise<void> {
+  try {
+    const u = await getCurrentUser();
+    if (!u) return;
+    switch (key) {
+      case JOURNAL_KEY:
+        await pushJournal((value as JournalEntry[]).map(e => ({
+          id: e.id, body: e.content, created_at: new Date(e.createdAt).toISOString(),
+        })));
+        return;
+      case FITNESS_KEY:
+        await pushFitness((value as FitnessLog[]).map(l => ({
+          id: l.id, kind: l.activity, payload: l, created_at: new Date(l.createdAt).toISOString(),
+        })));
+        return;
+      case PROGRESS_KEY:
+        await Promise.all((value as DailyProgress[]).map(p =>
+          pushProgressDay({
+            date: p.date,
+            built: p.meaningfulActions > 0,
+            revenue: p.revenueMoved,
+            content: p.contentProduced > 0,
+            outreach: p.outreachActions > 0,
+            health: false,
+            notes: p.notes ?? null,
+          })
+        ));
+        return;
+      case USER_PROFILE_KEY: {
+        const p = value as UserProfile | null;
+        if (!p) return;
+        await pushProfile({
+          name: p.name, role: p.role, goals: p.goals, focus: p.focus,
+          onboarded_at: new Date(p.onboardedAt).toISOString(),
+        });
+        return;
+      }
+      // Memory + behavior + sessions + reports + priority + weekly all go to agent_memory by scope
+      case MEMORY_KEY:    await pushMemory('chat_history_legacy', value); return;
+      case PROFILE_KEY:   await pushMemory('persistent_facts', value); return;
+      case SESSIONS_KEY:  await pushMemory('work_sessions', value); return;
+      case PRIORITY_KEY:  await pushMemory('today_priority', value); return;
+      case WEEKLY_KEY:    await pushMemory('weekly_reviews', value); return;
+      case REPORTS_KEY:   await pushMemory('weekly_reports', value); return;
+      case BEHAVIOR_KEY:  await pushMemory('behavior_log', value); return;
+    }
+  } catch { /* silent */ }
 }
 
 // ── Journal ──────────────────────────────────────────────────
@@ -87,6 +146,7 @@ export function saveJournalEntry(content: string): JournalEntry {
 export function deleteJournalEntry(id: string): void {
   const entries = getJournalEntries().filter(e => e.id !== id);
   set(JOURNAL_KEY, entries);
+  if (supabaseEnabled) { void cloudDeleteJournal(id); }
 }
 
 // ── Fitness ──────────────────────────────────────────────────
@@ -221,22 +281,120 @@ export function saveReport(r: WeeklyReport): void {
   set(REPORTS_KEY, all.slice(0, 26));
 }
 
-// ── One-time remote pull on first launch (Supabase → local) ──
+// ── Hydrate local from remote on sign-in (Supabase → local) ──
+// Always runs after a successful login. Cloud is the source of truth
+// for the signed-in user — local is a cache + offline buffer.
 export async function hydrateFromRemote(): Promise<void> {
   if (!supabaseEnabled) return;
-  const keys = [
-    JOURNAL_KEY, FITNESS_KEY, PROGRESS_KEY, WEEKLY_KEY,
-    PRIORITY_KEY, SESSIONS_KEY, MEMORY_KEY, PROFILE_KEY, REPORTS_KEY,
-  ];
-  await Promise.all(keys.map(async k => {
-    // Only overwrite if local is empty (first-install recovery case)
-    const local = localStorage.getItem(k);
-    if (local) return;
-    const remote = await syncPull<unknown>(k);
-    if (remote != null) {
-      try { localStorage.setItem(k, JSON.stringify(remote)); } catch {}
+  const u = await getCurrentUser();
+  if (!u) return;
+  try {
+    // Profile
+    const profile = await pullProfile();
+    if (profile) {
+      const local: UserProfile = {
+        name: profile.name ?? '',
+        role: profile.role ?? '',
+        focus: (profile.focus as FocusArea) ?? 'all',
+        goals: profile.goals ?? '',
+        onboardedAt: profile.onboarded_at ? new Date(profile.onboarded_at).getTime() : Date.now(),
+      };
+      try { localStorage.setItem(USER_PROFILE_KEY, JSON.stringify(local)); } catch {}
     }
-  }));
+
+    // Journal
+    const journal = await pullJournal();
+    if (journal.length) {
+      const local: JournalEntry[] = journal.map(r => ({
+        id: r.id,
+        content: r.body,
+        date: r.created_at.split('T')[0],
+        createdAt: new Date(r.created_at).getTime(),
+      }));
+      try { localStorage.setItem(JOURNAL_KEY, JSON.stringify(local)); } catch {}
+    }
+
+    // Progress
+    const progress = await pullProgress();
+    if (progress.length) {
+      const local: DailyProgress[] = progress.map(p => ({
+        date: p.date,
+        revenueMoved: p.revenue,
+        meaningfulActions: p.built ? 1 : 0,
+        contentProduced: p.content ? 1 : 0,
+        outreachActions: p.outreach ? 1 : 0,
+        priority: '',
+        notes: p.notes ?? undefined,
+      }));
+      try { localStorage.setItem(PROGRESS_KEY, JSON.stringify(local)); } catch {}
+    }
+
+    // Fitness
+    const fitness = await pullFitness();
+    if (fitness.length) {
+      const local: FitnessLog[] = fitness.map(f => {
+        const p = (f.payload ?? {}) as Partial<FitnessLog>;
+        return {
+          id: f.id,
+          date: f.created_at.split('T')[0],
+          activity: f.kind,
+          duration: p.duration,
+          weight: p.weight,
+          sleep: p.sleep,
+          energy: p.energy,
+          createdAt: new Date(f.created_at).getTime(),
+        };
+      });
+      try { localStorage.setItem(FITNESS_KEY, JSON.stringify(local)); } catch {}
+    }
+
+    // Chat history
+    const chat = await pullChat();
+    if (chat.length) {
+      const local: MemoryMessage[] = chat.map(c => ({
+        role: c.role,
+        content: c.content,
+        ts: new Date(c.created_at).getTime(),
+      }));
+      try { localStorage.setItem(MEMORY_KEY, JSON.stringify(local.slice(-MEMORY_CAP))); } catch {}
+    }
+
+    // Persistent facts (profile notes)
+    const facts = await pullMemory<MemoryProfile>('persistent_facts');
+    if (facts) { try { localStorage.setItem(PROFILE_KEY, JSON.stringify(facts)); } catch {} }
+
+    // Misc memory scopes
+    for (const [scope, key] of [
+      ['work_sessions',   SESSIONS_KEY],
+      ['today_priority',  PRIORITY_KEY],
+      ['weekly_reviews',  WEEKLY_KEY],
+      ['weekly_reports',  REPORTS_KEY],
+      ['behavior_log',    BEHAVIOR_KEY],
+    ] as const) {
+      const remote = await pullMemory<unknown>(scope);
+      if (remote != null) { try { localStorage.setItem(key, JSON.stringify(remote)); } catch {} }
+    }
+  } catch { /* silent — keep local as-is on failure */ }
+}
+
+// Push every local bucket to remote (manual or post-signin sync up).
+export async function pushAllToRemote(): Promise<void> {
+  if (!supabaseEnabled) return;
+  const u = await getCurrentUser();
+  if (!u) return;
+  await Promise.all([
+    cloudSyncKey(USER_PROFILE_KEY, getUserProfile()),
+    cloudSyncKey(JOURNAL_KEY, getJournalEntries()),
+    cloudSyncKey(FITNESS_KEY, getFitnessLogs()),
+    cloudSyncKey(PROGRESS_KEY, getProgressHistory()),
+    cloudSyncKey(MEMORY_KEY, getMemory()),
+    cloudSyncKey(PROFILE_KEY, getProfile()),
+    cloudSyncKey(SESSIONS_KEY, get<WorkSession[]>(SESSIONS_KEY, [])),
+    cloudSyncKey(PRIORITY_KEY, get<{date:string;priority:string}|null>(PRIORITY_KEY, null)),
+    cloudSyncKey(WEEKLY_KEY, getWeeklyReviews()),
+    cloudSyncKey(REPORTS_KEY, getReports()),
+    cloudSyncKey(BEHAVIOR_KEY, getBehavior()),
+  ]);
 }
 
 
