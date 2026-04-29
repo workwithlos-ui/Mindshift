@@ -259,7 +259,8 @@ export function saveUserProfile(p: UserProfile): void {
 }
 export function hasOnboarded(): boolean {
   const p = getUserProfile();
-  return !!(p && p.name);
+  // Use onboardedAt so skip-via-nav also counts as onboarded
+  return !!(p && p.onboardedAt);
 }
 
 // ── Behavior log (personalization engine) ────────────────────
@@ -268,7 +269,7 @@ export type BehaviorEvent =
   | 'affirm:swipe' | 'affirm:complete'
   | 'timer:start' | 'timer:complete'
   | 'journal:save' | 'fitness:save' | 'progress:action'
-  | 'reset:tap' | 'scorecard:share' | 'onboard:complete';
+  | 'reset:tap' | 'scorecard:share' | 'onboard:complete' | 'onboard:skipped-via-nav';
 
 export interface BehaviorEntry {
   event: BehaviorEvent;
