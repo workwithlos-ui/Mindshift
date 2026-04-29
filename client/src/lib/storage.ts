@@ -238,3 +238,61 @@ export async function hydrateFromRemote(): Promise<void> {
     }
   }));
 }
+
+
+// ── User profile (onboarding) ────────────────────────────────
+export type FocusArea = 'mind' | 'body' | 'business' | 'all';
+export interface UserProfile {
+  name: string;
+  role: string;        // e.g. "Founder", "Creator", "Operator"
+  focus: FocusArea;
+  goals: string;       // free-form
+  handle?: string;     // future: social identifier
+  onboardedAt: number;
+}
+const USER_PROFILE_KEY = 'ms_user_profile';
+export function getUserProfile(): UserProfile | null {
+  return get<UserProfile | null>(USER_PROFILE_KEY, null);
+}
+export function saveUserProfile(p: UserProfile): void {
+  set(USER_PROFILE_KEY, p);
+}
+export function hasOnboarded(): boolean {
+  const p = getUserProfile();
+  return !!(p && p.name);
+}
+
+// ── Behavior log (personalization engine) ────────────────────
+export type BehaviorEvent =
+  | 'view:today' | 'view:execute' | 'view:journal' | 'view:fitness' | 'view:progress' | 'view:assistant'
+  | 'affirm:swipe' | 'affirm:complete'
+  | 'timer:start' | 'timer:complete'
+  | 'journal:save' | 'fitness:save' | 'progress:action'
+  | 'reset:tap' | 'scorecard:share' | 'onboard:complete';
+
+export interface BehaviorEntry {
+  event: BehaviorEvent;
+  ts: number;
+  hour: number;         // 0-23 when event fired
+  date: string;         // YYYY-MM-DD
+  meta?: Record<string, string | number>;
+}
+const BEHAVIOR_KEY = 'ms_behavior';
+const BEHAVIOR_CAP = 1000;
+
+export function logBehavior(event: BehaviorEvent, meta?: Record<string, string | number>): void {
+  const now = new Date();
+  const entry: BehaviorEntry = {
+    event,
+    ts: now.getTime(),
+    hour: now.getHours(),
+    date: now.toISOString().split('T')[0],
+    meta,
+  };
+  const all = get<BehaviorEntry[]>(BEHAVIOR_KEY, []);
+  all.push(entry);
+  set(BEHAVIOR_KEY, all.slice(-BEHAVIOR_CAP));
+}
+export function getBehavior(): BehaviorEntry[] {
+  return get<BehaviorEntry[]>(BEHAVIOR_KEY, []);
+}

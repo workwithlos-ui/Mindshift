@@ -24,7 +24,8 @@ import {
   SectionLabel,
   EASE,
 } from '@/components/ui-shared';
-import { getTodayProgress, saveTodayProgress, getTodaySessions } from '@/lib/storage';
+import { getTodayProgress, saveTodayProgress, getTodaySessions, getUserProfile } from '@/lib/storage';
+import { getBriefing } from '@/lib/personalization';
 
 // ── Time-of-day design config ────────────────────────────────
 type TimeConfig = {
@@ -78,6 +79,9 @@ export default function Today() {
   }, []);
 
   const cfg = TIME_CONFIG[time];
+  const profile = getUserProfile();
+  const briefing = getBriefing();
+  const greeting = profile?.name ? briefing.greeting : getGreeting();
   const score = calcDayScore(
     totalFocusMin,
     progress.meaningfulActions,
@@ -114,7 +118,7 @@ export default function Today() {
                 {formatStamp()} · {cfg.label}
               </span>
             </div>
-            <h1 className="display-xl text-white">{getGreeting()}</h1>
+            <h1 className="display-xl text-white">{greeting}</h1>
             <p className="mt-1 text-sm text-white/45" style={{ fontFamily: 'var(--font-ui)' }}>
               {formatDate()}
             </p>
@@ -123,6 +127,29 @@ export default function Today() {
             <MomentumReset />
           </div>
         </motion.div>
+
+        {briefing.nudge && (
+          <motion.div
+            initial={{ opacity: 0, y: 6 }}
+            animate={{ opacity: 1, y: 0 }}
+            transition={{ duration: 0.45, ease: EASE, delay: 0.08 }}
+            className="mb-4"
+            style={{
+              background: 'rgba(183,148,244,0.06)',
+              border: '1px solid rgba(183,148,244,0.18)',
+              borderRadius: 14,
+              padding: '12px 14px',
+              fontSize: 13,
+              color: 'rgba(245,244,248,0.8)',
+              lineHeight: 1.5,
+            }}
+          >
+            <span style={{ fontFamily: 'JetBrains Mono, monospace', fontSize: 9, letterSpacing: '0.18em', color: 'rgba(183,148,244,0.75)', display: 'block', marginBottom: 4 }}>
+              SIGNAL
+            </span>
+            {briefing.nudge}
+          </motion.div>
+        )}
 
         {/* ── Day Score Hero ─────────────────────────────── */}
         <motion.div

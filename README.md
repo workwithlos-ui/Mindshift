@@ -30,6 +30,13 @@ A premium, mobile-first personal execution app for King (Los Silva · [@loshustl
 - **Habit streaks** — nudges on missed days, Expansion Mode unlocks at 7-day streak with new content.
 - **Supabase sync** — optional cloud backup (activates when env keys are set), with silent localStorage fallback.
 
+### Phase 3 features
+
+- **Onboarding wizard** — five-step, full-screen flow (name, role, focus area: mind/body/business/all, goals). Personalizes the greeting, AI tone, and first-week content.
+- **Personalization Engine** — silently tracks screen views, affirmation swipes, timer starts, journal saves. Adapts the Today briefing (swaps greeting, surfaces nudges when patterns break) and injects behavior context into every AI call.
+- **Shareable Daily Scorecard** — branded 4:5 card with streak, daily stats (focus minutes, actions, content), affirmation of the day. Exports to PNG via `html-to-image` and invokes the native iOS share sheet. Designed to be screenshot-worthy.
+- **Roadmap — Pass B (awaiting Supabase keys):** email-magic-link auth, multi-user schema, public leaderboard, friend streaks, shareable profile pages.
+
 ---
 
 ## Stack

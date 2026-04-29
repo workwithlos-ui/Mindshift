@@ -10,6 +10,7 @@ import { streamChat, type ChatMessage } from '@/lib/ai';
 import { PageHeader, Hairline, EASE } from '@/components/ui-shared';
 import { VoiceMic } from '@/components/VoiceMic';
 import { getMemory, appendMemory, getProfile } from '@/lib/storage';
+import { getAIContext } from '@/lib/personalization';
 
 interface Message {
   id: string;
@@ -79,7 +80,11 @@ export default function Assistant({
     let base = kingSystemPrompt;
     const profile = getProfile();
     if (profile.notes.length) {
-      base += `\n\n---\n\nLong-term context about King (always remember):\n- ${profile.notes.join('\n- ')}`;
+      base += `\n\n---\n\nLong-term context (always remember):\n- ${profile.notes.join('\n- ')}`;
+    }
+    const behaviorContext = getAIContext();
+    if (behaviorContext) {
+      base += `\n\n---\n\nBehavior signal (use to adapt tone):\n${behaviorContext}`;
     }
     if (activeAgent) {
       base += `\n\n---\n\nCurrent role: ${activeAgent.prompt}`;
